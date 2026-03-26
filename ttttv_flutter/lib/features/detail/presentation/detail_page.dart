@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
@@ -278,6 +279,11 @@ class _DetailSliverAppBar extends StatelessWidget {
       expandedHeight: 280,
       pinned: true,
       scrolledUnderElevation: 0,
+      title: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (_) => Future.microtask(windowManager.startDragging),
+        child: const SizedBox(width: double.infinity, height: kToolbarHeight),
+      ),
       actions: [
         favoriteLoading
             ? const Padding(

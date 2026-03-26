@@ -39,6 +39,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _showControls = true;
   Timer? _hideTimer;
   bool _isFullscreen = false;
+  double _panelWidth = 280;
+  bool _panelCollapsed = false;
+  static const double _panelMinWidth = 180;
+  static const double _panelMaxWidth = 400;
 
   PlayEpisode get _currentEpisode =>
       widget.playResult.sources[_sourceIndex].episodes[_episodeIndex];
@@ -155,15 +159,58 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       children: [
         // 左：视频 + 控制覆盖
         Expanded(
-          flex: 3,
           child: _buildVideoArea(cs, fullscreen: false),
         ),
-        // 右：集数面板
-        Container(
-          width: 280,
-          color: cs.surface,
-          child: _buildSidePanel(cs),
-        ),
+        // 右：集数面板（含拖拽条 + 折叠按钮）
+        if (!_panelCollapsed)
+          SizedBox(
+            width: _panelWidth,
+            child: Stack(
+              children: [
+                ColoredBox(
+                  color: cs.surface,
+                  child: _buildSidePanel(cs),
+                ),
+                // 拖拽分隔条（左边缘）
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeLeftRight,
+                    child: GestureDetector(
+                      onHorizontalDragUpdate: (d) {
+                        setState(() {
+                          _panelWidth = (_panelWidth - d.delta.dx)
+                              .clamp(_panelMinWidth, _panelMaxWidth);
+                        });
+                      },
+                      child: Container(width: 6, color: Colors.transparent),
+                    ),
+                  ),
+                ),
+                // 折叠按钮（面板左边缘中央）
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _PanelToggleButton(
+                      collapsed: false,
+                      onTap: () => setState(() => _panelCollapsed = true),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        // 展开按钮（面板折叠时显示在右侧）
+        if (_panelCollapsed)
+          _PanelToggleButton(
+            collapsed: true,
+            onTap: () => setState(() => _panelCollapsed = false),
+          ),
       ],
     );
   }
@@ -257,14 +304,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 Expanded(
-                  child: Text(
-                    '${widget.detail.vodName}  /  ${_currentEpisode.name}',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onPanStart: fullscreen
+                        ? null
+                        : (_) => Future.microtask(windowManager.startDragging),
+                    child: Text(
+                      '${widget.detail.vodName}  /  ${_currentEpisode.name}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -421,6 +474,33 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─── 面板折叠按钮 ────────────────────────────────────────────────────────────
+
+class _PanelToggleButton extends StatelessWidget {
+  const _PanelToggleButton({required this.collapsed, required this.onTap});
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 16,
+        color: Colors.black54,
+        alignment: Alignment.center,
+        child: Icon(
+          collapsed
+              ? Icons.chevron_left_rounded
+              : Icons.chevron_right_rounded,
+          color: Colors.white54,
+          size: 16,
+        ),
+      ),
     );
   }
 }
