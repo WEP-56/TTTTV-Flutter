@@ -1,0 +1,28 @@
+name: ttttv_flutter
+description: Flutter Windows-first client for TTTTV.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  dio: ^5.8.0+1
+  flutter_riverpod: ^2.6.1
+  shared_preferences: ^2.5.3
+  video_player: ^2.10.0
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_windows_video: ^1.0.11
+  window_manager: ^0.4.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
