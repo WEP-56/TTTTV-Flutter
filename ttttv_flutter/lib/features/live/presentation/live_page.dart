@@ -25,6 +25,10 @@ class _LivePageState extends ConsumerState<LivePage> {
         return 'SESSDATA=...; bili_jct=...; DedeUserID=...';
       case 'douyu':
         return 'acf_uid=...; acf_username=...; acf_ltkid=...';
+      case 'huya':
+        return 'yyuid=...; udb_uid=...; huya_web_uid=...';
+      case 'douyin':
+        return 'ttwid=...; __ac_nonce=...; msToken=...';
       default:
         return 'CookieName=...; AnotherCookie=...';
     }

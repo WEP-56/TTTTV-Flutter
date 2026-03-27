@@ -14,7 +14,9 @@ dependencies:
   crypto: ^3.0.6
   dio: ^5.8.0+1
   file_picker: ^10.3.2
+  fixnum: ^1.1.1
   flutter_riverpod: ^2.6.1
+  protobuf: ^3.1.0
   shared_preferences: ^2.5.3
   video_player: ^2.10.0
   web_socket_channel: ^3.0.3

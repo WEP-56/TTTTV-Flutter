@@ -50,6 +50,8 @@ class LiveRoomState {
     return urls[idx];
   }
 
+  Map<String, String>? get currentStreamHeaders => playUrl?.headers;
+
   LiveRoomState copyWith({
     LiveRoomDetail? detail,
     List<LivePlayQuality>? qualities,

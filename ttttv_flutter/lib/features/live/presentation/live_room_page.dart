@@ -408,8 +408,11 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
         fit: StackFit.expand,
         children: [
           LivePlayerWidget(
-            key: ValueKey(state.currentStreamUrl),
+            key: ValueKey(
+              '${state.currentStreamUrl}|${state.currentStreamHeaders}',
+            ),
             streamUrl: state.currentStreamUrl!,
+            httpHeaders: state.currentStreamHeaders,
             onError: controller.refresh,
           ),
           if (state.supportsDanmaku && state.danmakuEnabled)

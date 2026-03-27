@@ -12,9 +12,15 @@ import '../features/live/data/storage/live_library_store.dart';
 import '../features/live/providers/bilibili/bilibili_auth_service.dart';
 import '../features/live/providers/bilibili/bilibili_live_provider.dart';
 import '../features/live/providers/bilibili/bilibili_signer.dart';
+import '../features/live/providers/douyin/douyin_auth_service.dart';
+import '../features/live/providers/douyin/douyin_live_provider.dart';
+import '../features/live/providers/douyin/douyin_signer.dart';
 import '../features/live/providers/douyu/douyu_auth_service.dart';
 import '../features/live/providers/douyu/douyu_live_provider.dart';
 import '../features/live/providers/douyu/douyu_signer.dart';
+import '../features/live/providers/huya/huya_auth_service.dart';
+import '../features/live/providers/huya/huya_live_provider.dart';
+import '../features/live/providers/kuaishou/kuaishou_live_provider.dart';
 import '../features/live/providers/custom/custom_m3u_provider.dart';
 import '../features/play/domain/play_repository.dart';
 import '../features/search/application/search_controller.dart';
@@ -172,21 +178,39 @@ final liveProviderRegistryProvider = Provider<LiveProviderRegistry>((ref) {
     dio: dio,
     authService: bilibiliAuthService,
   );
+  final douyinAuthService = DouyinAuthService(cookieStore: cookieStore);
+  final douyinSigner = DouyinSigner(
+    dio: dio,
+    authService: douyinAuthService,
+  );
   final douyuAuthService = DouyuAuthService(cookieStore: cookieStore);
   final douyuSigner = DouyuSigner(
     dio: dio,
     authService: douyuAuthService,
   );
+  final huyaAuthService = HuyaAuthService(cookieStore: cookieStore);
   return LiveProviderRegistry([
     BilibiliLiveProvider(
       dio: dio,
       signer: bilibiliSigner,
       authService: bilibiliAuthService,
     ),
+    DouyinLiveProvider(
+      dio: dio,
+      signer: douyinSigner,
+      authService: douyinAuthService,
+    ),
     DouyuLiveProvider(
       dio: dio,
       signer: douyuSigner,
       authService: douyuAuthService,
+    ),
+    HuyaLiveProvider(
+      dio: dio,
+      authService: huyaAuthService,
+    ),
+    KuaishouLiveProvider(
+      dio: dio,
     ),
     CustomM3uProvider(dio: dio, sourceStore: sourceStore),
   ]);

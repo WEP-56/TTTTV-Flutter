@@ -8,10 +8,12 @@ class LivePlayerWidget extends StatefulWidget {
   const LivePlayerWidget({
     super.key,
     required this.streamUrl,
+    this.httpHeaders,
     this.onError,
   });
 
   final String streamUrl;
+  final Map<String, String>? httpHeaders;
   final VoidCallback? onError;
 
   @override
@@ -41,7 +43,8 @@ class _LivePlayerWidgetState extends State<LivePlayerWidget> {
   @override
   void didUpdateWidget(LivePlayerWidget old) {
     super.didUpdateWidget(old);
-    if (old.streamUrl != widget.streamUrl) {
+    if (old.streamUrl != widget.streamUrl ||
+        !_sameHeaders(old.httpHeaders, widget.httpHeaders)) {
       setState(() => _hasError = false);
       _play(widget.streamUrl);
     }
@@ -55,8 +58,26 @@ class _LivePlayerWidgetState extends State<LivePlayerWidget> {
   }
 
   Future<void> _play(String url) async {
-    await _player.open(Media(url));
+    await _player.open(
+      Media(
+        url,
+        httpHeaders: widget.httpHeaders,
+      ),
+    );
     await _player.play();
+  }
+
+  bool _sameHeaders(
+    Map<String, String>? left,
+    Map<String, String>? right,
+  ) {
+    if (identical(left, right)) return true;
+    if (left == null || right == null) return left == right;
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
   }
 
   @override
