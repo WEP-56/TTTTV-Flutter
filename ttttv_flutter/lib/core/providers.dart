@@ -2,6 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/domain/history_repository.dart';
+import '../features/live/application/live_controller.dart';
+import '../features/live/application/live_room_controller.dart';
+import '../features/live/data/http_live_backend.dart';
+import '../features/live/domain/live_repository.dart';
 import '../features/play/domain/play_repository.dart';
 import '../features/search/application/search_controller.dart';
 import '../features/search/domain/search_repository.dart';
@@ -118,3 +122,24 @@ final siteListProvider = FutureProvider<List<SiteWithStatus>>((ref) async {
 
 // 跨页面搜索触发：首页点击豆瓣条目 → 写入标题 → AppShell 切换到搜索 Tab → SearchPage 自动搜索
 final pendingSearchProvider = StateProvider<String?>((ref) => null);
+
+// ─── Live providers ───────────────────────────────────────────────────────────
+
+final liveRepositoryProvider = Provider<LiveRepository>((ref) {
+  final client = ref.watch(httpBackendClientProvider);
+  final config = ref.watch(backendConfigProvider);
+  return HttpLiveBackend(client: client, baseUrl: config.baseUrl);
+});
+
+final liveControllerProvider =
+    StateNotifierProvider<LiveController, LiveState>((ref) {
+  final repo = ref.watch(liveRepositoryProvider);
+  return LiveController(repo);
+});
+
+final liveRoomControllerProvider = StateNotifierProvider.family<
+    LiveRoomController, LiveRoomState,
+    ({String platform, String roomId})>((ref, key) {
+  final repo = ref.watch(liveRepositoryProvider);
+  return LiveRoomController(repo, key.platform, key.roomId);
+});

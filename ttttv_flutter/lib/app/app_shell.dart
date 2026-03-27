@@ -4,6 +4,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../core/providers.dart';
 import '../features/home/presentation/home_page.dart';
+import '../features/live/presentation/live_page.dart';
 import '../features/my/presentation/my_page.dart';
 import '../features/search/presentation/search_page.dart';
 import '../features/settings/presentation/settings_page.dart';
@@ -11,6 +12,7 @@ import '../features/settings/presentation/settings_page.dart';
 enum _Section {
   home('首页', Icons.home_rounded, Icons.home_outlined),
   search('搜索', Icons.search_rounded, Icons.search_rounded),
+  live('直播', Icons.live_tv_rounded, Icons.live_tv_outlined),
   my('我的', Icons.person_rounded, Icons.person_outline_rounded),
   settings('设置', Icons.settings_rounded, Icons.settings_outlined);
 
@@ -33,6 +35,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   static const _pages = <Widget>[
     HomePage(),
     SearchPage(),
+    LivePage(),
     MyPage(),
     SettingsPage(),
   ];

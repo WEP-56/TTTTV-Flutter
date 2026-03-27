@@ -504,6 +504,316 @@ class AddSourceRequest {
   }
 }
 
+// ─── Live models ────────────────────────────────────────────────────────────
+
+class LivePlatformInfo {
+  LivePlatformInfo({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory LivePlatformInfo.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LivePlatformInfo(
+      id: _readString(map['id']) ?? '',
+      name: _readString(map['name']) ?? '',
+    );
+  }
+}
+
+class LiveRoomItem {
+  LiveRoomItem({
+    required this.platform,
+    required this.roomId,
+    required this.title,
+    required this.cover,
+    required this.userName,
+    required this.online,
+  });
+
+  final String platform;
+  final String roomId;
+  final String title;
+  final String cover;
+  final String userName;
+  final int online;
+
+  factory LiveRoomItem.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveRoomItem(
+      platform: _readString(map['platform']) ?? '',
+      roomId: _readString(map['room_id']) ?? '',
+      title: _readString(map['title']) ?? '',
+      cover: _readString(map['cover']) ?? '',
+      userName: _readString(map['user_name']) ?? '',
+      online: _readInt(map['online']) ?? 0,
+    );
+  }
+}
+
+class LiveRoomDetail {
+  LiveRoomDetail({
+    required this.platform,
+    required this.roomId,
+    required this.title,
+    required this.cover,
+    required this.userName,
+    required this.userAvatar,
+    required this.online,
+    required this.status,
+    required this.isRecord,
+    required this.url,
+    this.introduction,
+    this.notice,
+    this.showTime,
+  });
+
+  final String platform;
+  final String roomId;
+  final String title;
+  final String cover;
+  final String userName;
+  final String userAvatar;
+  final int online;
+  final bool status;
+  final bool isRecord;
+  final String url;
+  final String? introduction;
+  final String? notice;
+  final String? showTime;
+
+  factory LiveRoomDetail.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveRoomDetail(
+      platform: _readString(map['platform']) ?? '',
+      roomId: _readString(map['room_id']) ?? '',
+      title: _readString(map['title']) ?? '',
+      cover: _readString(map['cover']) ?? '',
+      userName: _readString(map['user_name']) ?? '',
+      userAvatar: _readString(map['user_avatar']) ?? '',
+      online: _readInt(map['online']) ?? 0,
+      status: map['status'] as bool? ?? false,
+      isRecord: map['is_record'] as bool? ?? false,
+      url: _readString(map['url']) ?? '',
+      introduction: _readString(map['introduction']),
+      notice: _readString(map['notice']),
+      showTime: _readString(map['show_time']),
+    );
+  }
+}
+
+class LivePlayQuality {
+  LivePlayQuality({
+    required this.id,
+    required this.name,
+    required this.sort,
+  });
+
+  final String id;
+  final String name;
+  final int sort;
+
+  factory LivePlayQuality.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LivePlayQuality(
+      id: _readString(map['id']) ?? '',
+      name: _readString(map['name']) ?? '',
+      sort: _readInt(map['sort']) ?? 0,
+    );
+  }
+}
+
+class LivePlayUrl {
+  LivePlayUrl({
+    required this.urls,
+    this.headers,
+    this.urlType,
+    this.expiresAt,
+  });
+
+  final List<String> urls;
+  final Map<String, String>? headers;
+  final String? urlType;
+  final int? expiresAt;
+
+  factory LivePlayUrl.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    final rawHeaders = map['headers'] as Map<String, dynamic>?;
+    return LivePlayUrl(
+      urls: ((map['urls'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      headers: rawHeaders?.map((k, v) => MapEntry(k, v.toString())),
+      urlType: _readString(map['url_type']),
+      expiresAt: _readInt(map['expires_at']),
+    );
+  }
+}
+
+class LiveMessageColor {
+  LiveMessageColor({required this.r, required this.g, required this.b});
+
+  final int r;
+  final int g;
+  final int b;
+
+  factory LiveMessageColor.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveMessageColor(
+      r: _readInt(map['r']) ?? 255,
+      g: _readInt(map['g']) ?? 255,
+      b: _readInt(map['b']) ?? 255,
+    );
+  }
+}
+
+class LiveMessage {
+  LiveMessage({
+    required this.type,
+    required this.userName,
+    required this.message,
+    required this.color,
+  });
+
+  final String type;
+  final String userName;
+  final String message;
+  final LiveMessageColor color;
+
+  factory LiveMessage.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveMessage(
+      type: _readString(map['type']) ?? '',
+      userName: _readString(map['user_name']) ?? '',
+      message: _readString(map['message']) ?? '',
+      color: map['color'] != null
+          ? LiveMessageColor.fromJson(map['color'])
+          : LiveMessageColor(r: 255, g: 255, b: 255),
+    );
+  }
+}
+
+class LiveFavoriteItem {
+  LiveFavoriteItem({
+    required this.platform,
+    required this.roomId,
+    required this.title,
+    required this.createdTime,
+    this.cover,
+    this.userName,
+    this.userAvatar,
+  });
+
+  final String platform;
+  final String roomId;
+  final String title;
+  final int createdTime;
+  final String? cover;
+  final String? userName;
+  final String? userAvatar;
+
+  factory LiveFavoriteItem.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveFavoriteItem(
+      platform: _readString(map['platform']) ?? '',
+      roomId: _readString(map['room_id']) ?? '',
+      title: _readString(map['title']) ?? '',
+      createdTime: _readInt(map['created_time']) ?? 0,
+      cover: _readString(map['cover']),
+      userName: _readString(map['user_name']),
+      userAvatar: _readString(map['user_avatar']),
+    );
+  }
+}
+
+class LiveHistoryItem {
+  LiveHistoryItem({
+    required this.platform,
+    required this.roomId,
+    required this.title,
+    required this.lastWatchTime,
+    this.cover,
+    this.userName,
+    this.userAvatar,
+  });
+
+  final String platform;
+  final String roomId;
+  final String title;
+  final int lastWatchTime;
+  final String? cover;
+  final String? userName;
+  final String? userAvatar;
+
+  factory LiveHistoryItem.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return LiveHistoryItem(
+      platform: _readString(map['platform']) ?? '',
+      roomId: _readString(map['room_id']) ?? '',
+      title: _readString(map['title']) ?? '',
+      lastWatchTime: _readInt(map['last_watch_time']) ?? 0,
+      cover: _readString(map['cover']),
+      userName: _readString(map['user_name']),
+      userAvatar: _readString(map['user_avatar']),
+    );
+  }
+}
+
+class BilibiliAuthStatus {
+  BilibiliAuthStatus({required this.loggedIn});
+
+  final bool loggedIn;
+
+  factory BilibiliAuthStatus.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return BilibiliAuthStatus(loggedIn: map['logged_in'] as bool? ?? false);
+  }
+}
+
+class BilibiliQrCode {
+  BilibiliQrCode({
+    required this.qrcodeKey,
+    required this.url,
+    required this.svg,
+  });
+
+  final String qrcodeKey;
+  final String url;
+  final String svg;
+
+  factory BilibiliQrCode.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return BilibiliQrCode(
+      qrcodeKey: _readString(map['qrcode_key']) ?? '',
+      url: _readString(map['url']) ?? '',
+      svg: _readString(map['svg']) ?? '',
+    );
+  }
+}
+
+class BilibiliQrPollResult {
+  BilibiliQrPollResult({
+    required this.code,
+    required this.status,
+    required this.message,
+  });
+
+  final int code;
+  final String status;
+  final String message;
+
+  factory BilibiliQrPollResult.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return BilibiliQrPollResult(
+      code: _readInt(map['code']) ?? 0,
+      status: _readString(map['status']) ?? '',
+      message: _readString(map['message']) ?? '',
+    );
+  }
+}
+
+// ─── End live models ─────────────────────────────────────────────────────────
+
 String? _readString(Object? value) {
   if (value == null) {
     return null;
