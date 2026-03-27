@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -256,17 +257,79 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     return Column(
       children: [
         _buildAppBar(context, state, fullscreen: false),
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: _buildVideoArea(
-            state,
-            controller,
-            fullscreen: false,
-          ),
-        ),
-        _buildControlRow(context, state, controller),
         Expanded(
-          child: _buildRoomInfo(state, liveProvider, colorScheme),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final horizontalPadding =
+                  constraints.maxWidth >= 1200 ? 24.0 : 12.0;
+              final verticalPadding =
+                  constraints.maxHeight >= 760 ? 18.0 : 12.0;
+              final infoHeight = math.min(
+                64.0,
+                math.max(52.0, constraints.maxHeight * 0.08),
+              );
+              final maxContentWidth = math.min(constraints.maxWidth, 1440.0);
+              final playerMaxHeight = math.max(
+                220.0,
+                constraints.maxHeight - infoHeight - 72.0 - verticalPadding * 2,
+              );
+              final playerMaxWidth =
+                  math.max(320.0, maxContentWidth - horizontalPadding * 2);
+
+              return Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxContentWidth),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      verticalPadding,
+                      horizontalPadding,
+                      verticalPadding,
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: playerMaxWidth,
+                                maxHeight: playerMaxHeight,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(18),
+                                child: AspectRatio(
+                                  aspectRatio: 16 / 9,
+                                  child: _buildVideoArea(
+                                    state,
+                                    controller,
+                                    fullscreen: false,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildWindowedControlBar(context, state, controller),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: infoHeight,
+                          width: double.infinity,
+                          child: _buildInfoStrip(
+                            state,
+                            liveProvider,
+                            colorScheme,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ],
     );
@@ -536,6 +599,342 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     );
   }
 
+  Widget _buildWindowedControlBar(
+    BuildContext context,
+    LiveRoomState state,
+    LiveRoomController controller,
+  ) {
+    final qualities = state.qualities;
+    final lineCount = state.playUrl?.urls.length ?? 0;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 920),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFF121212),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x26000000),
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                if (qualities.isNotEmpty)
+                  _DropdownChip<String>(
+                    label: '清晰度',
+                    value: state.selectedQualityId,
+                    items: qualities
+                        .map(
+                          (quality) => DropdownMenuItem<String>(
+                            value: quality.id,
+                            child: Text(quality.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        controller.selectQuality(value);
+                      }
+                    },
+                  ),
+                if (qualities.isNotEmpty && lineCount > 1)
+                  const SizedBox(width: 8),
+                if (lineCount > 1)
+                  _DropdownChip<int>(
+                    label: '线路',
+                    value: state.currentLineIndex,
+                    items: List.generate(
+                      lineCount,
+                      (index) => DropdownMenuItem<int>(
+                        value: index,
+                        child: Text('线路 ${index + 1}'),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value != null) {
+                        controller.selectLine(value);
+                      }
+                    },
+                  ),
+                const SizedBox(width: 12),
+                if (state.supportsDanmaku) ...[
+                  Switch(
+                    value: state.danmakuEnabled,
+                    onChanged: controller.setDanmakuEnabled,
+                    activeThumbColor: Colors.redAccent,
+                  ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    '弹幕',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  const SizedBox(width: 4),
+                  TextButton(
+                    onPressed: () => _showDanmakuSettings(
+                      context,
+                      state,
+                      controller,
+                    ),
+                    child: const Text('设置'),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                IconButton(
+                  color: Colors.white,
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: '刷新播放',
+                  onPressed: controller.refresh,
+                ),
+                IconButton(
+                  color: state.isFavorite ? Colors.amber : Colors.white,
+                  icon: Icon(
+                    state.isFavorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                  ),
+                  tooltip: state.isFavorite ? '取消收藏' : '收藏',
+                  onPressed: controller.toggleFavorite,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoStrip(
+    LiveRoomState state,
+    LiveProvider liveProvider,
+    ColorScheme colorScheme,
+  ) {
+    final detail = state.detail;
+    if (detail == null) return const SizedBox.shrink();
+
+    final avatarUrl = detail.userAvatar.isNotEmpty
+        ? liveProvider.resolveImageUrl(detail.userAvatar)
+        : null;
+    final summary = (detail.notice ?? '').trim().isNotEmpty
+        ? detail.notice!.trim()
+        : (detail.introduction ?? '').trim();
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              backgroundImage:
+                  avatarUrl != null ? NetworkImage(avatarUrl) : null,
+              child: avatarUrl == null
+                  ? Icon(
+                      Icons.person,
+                      size: 16,
+                      color: colorScheme.onSurfaceVariant,
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              fit: FlexFit.loose,
+              child: Text(
+                detail.userName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _formatOnline(detail),
+              style: TextStyle(
+                fontSize: 11,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.88),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Text(
+                'LIVE',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (summary.isNotEmpty) ...[
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _buildCompactRoomInfo(
+    LiveRoomState state,
+    LiveProvider liveProvider,
+    ColorScheme colorScheme,
+  ) {
+    final detail = state.detail;
+    if (detail == null) return const SizedBox.shrink();
+
+    final avatarUrl = detail.userAvatar.isNotEmpty
+        ? liveProvider.resolveImageUrl(detail.userAvatar)
+        : null;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                    backgroundImage:
+                        avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                    child: avatarUrl == null
+                        ? Icon(Icons.person,
+                            color: colorScheme.onSurfaceVariant)
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          detail.userName,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              _formatOnline(detail),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withValues(alpha: 0.88),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: const Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if ((detail.introduction ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  detail.introduction!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.25,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              if ((detail.notice ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '公告：${detail.notice}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.2,
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.82),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
   Widget _buildRoomInfo(
     LiveRoomState state,
     LiveProvider liveProvider,

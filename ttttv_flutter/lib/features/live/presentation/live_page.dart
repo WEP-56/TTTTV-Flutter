@@ -19,6 +19,17 @@ class LivePage extends ConsumerStatefulWidget {
 class _LivePageState extends ConsumerState<LivePage> {
   final TextEditingController _searchController = TextEditingController();
 
+  String _cookieHintText(LiveProvider provider) {
+    switch (provider.id) {
+      case 'bilibili':
+        return 'SESSDATA=...; bili_jct=...; DedeUserID=...';
+      case 'douyu':
+        return 'acf_uid=...; acf_username=...; acf_ltkid=...';
+      default:
+        return 'CookieName=...; AnotherCookie=...';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -282,9 +293,9 @@ class _LivePageState extends ConsumerState<LivePage> {
                     controller: cookieController,
                     minLines: 4,
                     maxLines: 8,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: 'SESSDATA=...; bili_jct=...; DedeUserID=...',
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      hintText: _cookieHintText(provider),
                     ),
                   ),
                 ],
