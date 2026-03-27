@@ -10,10 +10,14 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  brotli: ^0.6.0
+  crypto: ^3.0.6
   dio: ^5.8.0+1
+  file_picker: ^10.3.2
   flutter_riverpod: ^2.6.1
   shared_preferences: ^2.5.3
   video_player: ^2.10.0
+  web_socket_channel: ^3.0.3
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_windows_video: ^1.0.11

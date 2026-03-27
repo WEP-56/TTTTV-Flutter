@@ -1,34 +1,42 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/vod_models.dart';
-import '../domain/live_repository.dart';
+import '../core/providers/live_provider.dart';
+import '../core/providers/live_provider_registry.dart';
 
 class LiveState {
   LiveState({
-    this.platforms = const [],
+    this.providers = const [],
     this.rooms = const [],
-    this.activePlatform = 'bilibili',
+    this.activeProviderId = '',
     this.loading = false,
     this.error,
   });
 
-  final List<LivePlatformInfo> platforms;
+  final List<LiveProviderDescriptor> providers;
   final List<LiveRoomItem> rooms;
-  final String activePlatform;
+  final String activeProviderId;
   final bool loading;
   final String? error;
 
+  LiveProviderDescriptor? get activeProvider {
+    for (final provider in providers) {
+      if (provider.id == activeProviderId) return provider;
+    }
+    return providers.isEmpty ? null : providers.first;
+  }
+
   LiveState copyWith({
-    List<LivePlatformInfo>? platforms,
+    List<LiveProviderDescriptor>? providers,
     List<LiveRoomItem>? rooms,
-    String? activePlatform,
+    String? activeProviderId,
     bool? loading,
     Object? error = _sentinel,
   }) {
     return LiveState(
-      platforms: platforms ?? this.platforms,
+      providers: providers ?? this.providers,
       rooms: rooms ?? this.rooms,
-      activePlatform: activePlatform ?? this.activePlatform,
+      activeProviderId: activeProviderId ?? this.activeProviderId,
       loading: loading ?? this.loading,
       error: error == _sentinel ? this.error : error as String?,
     );
@@ -38,55 +46,77 @@ class LiveState {
 const _sentinel = Object();
 
 class LiveController extends StateNotifier<LiveState> {
-  LiveController(this._repo) : super(LiveState());
+  LiveController(this._registry) : super(LiveState());
 
-  final LiveRepository _repo;
+  final LiveProviderRegistry _registry;
 
-  Future<void> loadPlatforms() async {
-    try {
-      final platforms = await _repo.fetchPlatforms();
-      if (platforms.isNotEmpty) {
-        state = state.copyWith(platforms: platforms);
-      }
-    } catch (_) {
-      // non-critical: fall back to hardcoded list in UI
+  Future<void> initialize() async {
+    final descriptors = _registry.descriptors;
+    final activeProviderId = state.activeProviderId.isNotEmpty
+        ? state.activeProviderId
+        : (descriptors.isNotEmpty ? descriptors.first.id : '');
+
+    state = state.copyWith(
+      providers: descriptors,
+      activeProviderId: activeProviderId,
+    );
+
+    if (activeProviderId.isNotEmpty) {
+      await loadRecommend();
     }
   }
 
   Future<void> loadRecommend() async {
+    final provider = _activeProvider;
+    if (provider == null) return;
+
     state = state.copyWith(loading: true, error: null);
     try {
-      final rooms = await _repo.recommend(state.activePlatform);
-      state = state.copyWith(rooms: rooms, loading: false);
-    } catch (e) {
+      final rooms = await provider.fetchRecommend();
+      state = state.copyWith(rooms: rooms, loading: false, error: null);
+    } catch (error) {
       state = state.copyWith(
-        rooms: [],
+        rooms: const [],
         loading: false,
-        error: e.toString(),
+        error: error.toString(),
       );
     }
   }
 
-  Future<void> search(String kw) async {
-    if (kw.trim().isEmpty) {
+  Future<void> search(String keyword) async {
+    final provider = _activeProvider;
+    if (provider == null) return;
+
+    if (keyword.trim().isEmpty) {
       await loadRecommend();
       return;
     }
+
     state = state.copyWith(loading: true, error: null);
     try {
-      final rooms = await _repo.search(state.activePlatform, kw.trim());
-      state = state.copyWith(rooms: rooms, loading: false);
-    } catch (e) {
+      final rooms = await provider.search(keyword.trim());
+      state = state.copyWith(rooms: rooms, loading: false, error: null);
+    } catch (error) {
       state = state.copyWith(
-        rooms: [],
+        rooms: const [],
         loading: false,
-        error: e.toString(),
+        error: error.toString(),
       );
     }
   }
 
-  Future<void> switchPlatform(String platform) async {
-    state = state.copyWith(activePlatform: platform, rooms: []);
+  Future<void> switchProvider(String providerId) async {
+    if (providerId == state.activeProviderId) return;
+    state = state.copyWith(
+      activeProviderId: providerId,
+      rooms: const [],
+      error: null,
+    );
     await loadRecommend();
+  }
+
+  LiveProvider? get _activeProvider {
+    if (state.activeProviderId.isEmpty) return null;
+    return _registry.of(state.activeProviderId);
   }
 }

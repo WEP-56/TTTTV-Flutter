@@ -1,11 +1,18 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/domain/history_repository.dart';
 import '../features/live/application/live_controller.dart';
 import '../features/live/application/live_room_controller.dart';
-import '../features/live/data/http_live_backend.dart';
-import '../features/live/domain/live_repository.dart';
+import '../features/live/core/providers/live_provider_registry.dart';
+import '../features/live/data/m3u/m3u_source_store.dart';
+import '../features/live/data/storage/live_cookie_store.dart';
+import '../features/live/data/storage/live_library_store.dart';
+import '../features/live/providers/bilibili/bilibili_auth_service.dart';
+import '../features/live/providers/bilibili/bilibili_live_provider.dart';
+import '../features/live/providers/bilibili/bilibili_signer.dart';
+import '../features/live/providers/custom/custom_m3u_provider.dart';
 import '../features/play/domain/play_repository.dart';
 import '../features/search/application/search_controller.dart';
 import '../features/search/domain/search_repository.dart';
@@ -105,7 +112,8 @@ final searchControllerProvider =
   return SearchController(repository);
 });
 
-final historyItemsProvider = FutureProvider<List<WatchHistoryItem>>((ref) async {
+final historyItemsProvider =
+    FutureProvider<List<WatchHistoryItem>>((ref) async {
   final repository = ref.watch(historyRepositoryProvider);
   return repository.fetchHistory();
 });
@@ -125,21 +133,68 @@ final pendingSearchProvider = StateProvider<String?>((ref) => null);
 
 // ─── Live providers ───────────────────────────────────────────────────────────
 
-final liveRepositoryProvider = Provider<LiveRepository>((ref) {
-  final client = ref.watch(httpBackendClientProvider);
-  final config = ref.watch(backendConfigProvider);
-  return HttpLiveBackend(client: client, baseUrl: config.baseUrl);
+final liveDioProvider = Provider<Dio>((ref) {
+  return Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 30),
+      headers: const {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+      },
+    ),
+  );
+});
+
+final liveM3uSourceStoreProvider = Provider<LiveM3uSourceStore>((ref) {
+  return LiveM3uSourceStore();
+});
+
+final liveLibraryStoreProvider = Provider<LiveLibraryStore>((ref) {
+  return LiveLibraryStore();
+});
+
+final liveCookieStoreProvider = Provider<LiveCookieStore>((ref) {
+  return LiveCookieStore();
+});
+
+final liveProviderRegistryProvider = Provider<LiveProviderRegistry>((ref) {
+  final dio = ref.watch(liveDioProvider);
+  final sourceStore = ref.watch(liveM3uSourceStoreProvider);
+  final cookieStore = ref.watch(liveCookieStoreProvider);
+  final bilibiliAuthService = BilibiliAuthService(cookieStore: cookieStore);
+  final bilibiliSigner = BilibiliSigner(
+    dio: dio,
+    authService: bilibiliAuthService,
+  );
+  return LiveProviderRegistry([
+    BilibiliLiveProvider(
+      dio: dio,
+      signer: bilibiliSigner,
+      authService: bilibiliAuthService,
+    ),
+    CustomM3uProvider(dio: dio, sourceStore: sourceStore),
+  ]);
 });
 
 final liveControllerProvider =
     StateNotifierProvider<LiveController, LiveState>((ref) {
-  final repo = ref.watch(liveRepositoryProvider);
-  return LiveController(repo);
+  final registry = ref.watch(liveProviderRegistryProvider);
+  return LiveController(registry);
 });
 
 final liveRoomControllerProvider = StateNotifierProvider.family<
-    LiveRoomController, LiveRoomState,
+    LiveRoomController,
+    LiveRoomState,
     ({String platform, String roomId})>((ref, key) {
-  final repo = ref.watch(liveRepositoryProvider);
-  return LiveRoomController(repo, key.platform, key.roomId);
+  final registry = ref.watch(liveProviderRegistryProvider);
+  final libraryStore = ref.watch(liveLibraryStoreProvider);
+  return LiveRoomController(
+    registry,
+    libraryStore,
+    key.platform,
+    key.roomId,
+  );
 });

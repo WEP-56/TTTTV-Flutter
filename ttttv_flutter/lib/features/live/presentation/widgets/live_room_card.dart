@@ -6,17 +6,18 @@ class LiveRoomCard extends StatelessWidget {
   const LiveRoomCard({
     super.key,
     required this.room,
-    required this.proxyUrl,
+    required this.resolveImageUrl,
     required this.onTap,
   });
 
   final LiveRoomItem room;
-  final String Function(String platform, String url) proxyUrl;
+  final String Function(String platform, String url) resolveImageUrl;
   final VoidCallback onTap;
 
-  String _formatOnline(int n) {
-    if (n >= 10000) return '${(n / 10000).toStringAsFixed(1)}万';
-    return n.toString();
+  String _formatOnline(int value) {
+    if (value <= 0) return '';
+    if (value >= 10000) return '${(value / 10000).toStringAsFixed(1)}万';
+    return value.toString();
   }
 
   String get _platformLabel {
@@ -29,6 +30,10 @@ class LiveRoomCard extends StatelessWidget {
         return '虎牙';
       case 'douyin':
         return '抖音';
+      case 'kuaishou':
+        return '快手';
+      case 'custom_m3u':
+        return 'M3U';
       default:
         return room.platform;
     }
@@ -36,9 +41,11 @@ class LiveRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final coverUrl =
-        room.cover.isNotEmpty ? proxyUrl(room.platform, room.cover) : null;
+    final colorScheme = Theme.of(context).colorScheme;
+    final coverUrl = room.cover.isNotEmpty
+        ? resolveImageUrl(room.platform, room.cover)
+        : null;
+    final onlineLabel = _formatOnline(room.online);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -47,7 +54,6 @@ class LiveRoomCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 封面
             AspectRatio(
               aspectRatio: 16 / 9,
               child: Stack(
@@ -58,10 +64,9 @@ class LiveRoomCard extends StatelessWidget {
                           coverUrl,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) =>
-                              _Placeholder(cs: cs),
+                              _Placeholder(colorScheme: colorScheme),
                         )
-                      : _Placeholder(cs: cs),
-                  // 渐变遮罩
+                      : _Placeholder(colorScheme: colorScheme),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -75,13 +80,14 @@ class LiveRoomCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // LIVE badge
                   Positioned(
                     top: 8,
                     left: 8,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 3),
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red.withValues(alpha: 0.85),
                         borderRadius: BorderRadius.circular(6),
@@ -97,34 +103,34 @@ class LiveRoomCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // 在线人数
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: cs.primary.withValues(alpha: 0.9),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        _formatOnline(room.online),
-                        style: TextStyle(
-                          color: cs.onPrimary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                  if (onlineLabel.isNotEmpty)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          onlineLabel,
+                          style: TextStyle(
+                            color: colorScheme.onPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
-            // 信息区
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -133,7 +139,9 @@ class LiveRoomCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -144,17 +152,19 @@ class LiveRoomCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 12,
-                              color: cs.onSurfaceVariant),
+                            fontSize: 12,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         _platformLabel,
                         style: TextStyle(
-                            fontSize: 11,
-                            color: cs.onSurfaceVariant
-                                .withValues(alpha: 0.7)),
+                          fontSize: 11,
+                          color: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.7),
+                        ),
                       ),
                     ],
                   ),
@@ -169,15 +179,19 @@ class LiveRoomCard extends StatelessWidget {
 }
 
 class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.cs});
-  final ColorScheme cs;
+  const _Placeholder({required this.colorScheme});
+
+  final ColorScheme colorScheme;
 
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: cs.surfaceContainerHighest,
-      child: Icon(Icons.live_tv_rounded,
-          size: 36, color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+      color: colorScheme.surfaceContainerHighest,
+      child: Icon(
+        Icons.live_tv_rounded,
+        size: 36,
+        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+      ),
     );
   }
 }

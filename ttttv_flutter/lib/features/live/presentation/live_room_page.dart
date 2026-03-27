@@ -7,6 +7,9 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
+import '../application/live_room_controller.dart';
+import '../core/providers/live_provider.dart';
+import 'widgets/danmaku_overlay.dart';
 import 'widgets/live_player_widget.dart';
 
 class LiveRoomPage extends ConsumerStatefulWidget {
@@ -26,18 +29,25 @@ class LiveRoomPage extends ConsumerStatefulWidget {
 }
 
 class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
+  final FocusNode _keyboardFocusNode = FocusNode();
+
   bool _showControls = true;
-  Timer? _hideTimer;
   bool _isFullscreen = false;
+  Timer? _hideTimer;
 
   @override
   void initState() {
     super.initState();
+    _keyboardFocusNode.requestFocus();
     _startHideTimer();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref
-          .read(liveRoomControllerProvider(
-              (platform: widget.platform, roomId: widget.roomId)).notifier)
+          .read(
+            liveRoomControllerProvider(
+              (platform: widget.platform, roomId: widget.roomId),
+            ).notifier,
+          )
           .init();
     });
   }
@@ -45,19 +55,26 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    if (_isFullscreen) windowManager.setFullScreen(false);
+    _keyboardFocusNode.dispose();
+    if (_isFullscreen) {
+      windowManager.setFullScreen(false);
+    }
     super.dispose();
   }
 
   void _startHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _showControls = false);
+      if (mounted) {
+        setState(() => _showControls = false);
+      }
     });
   }
 
   void _onPointerMove() {
-    if (!_showControls) setState(() => _showControls = true);
+    if (!_showControls) {
+      setState(() => _showControls = true);
+    }
     _startHideTimer();
   }
 
@@ -65,84 +82,222 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     final next = !_isFullscreen;
     setState(() => _isFullscreen = next);
     windowManager.setFullScreen(next);
+    if (next) {
+      _startHideTimer();
+    }
+  }
+
+  Future<void> _showDanmakuSettings(
+    BuildContext context,
+    LiveRoomState state,
+    LiveRoomController controller,
+  ) async {
+    var opacity = state.danmakuOpacity;
+    var fontSize = state.danmakuFontSize;
+    var speed = state.danmakuSpeed;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  8,
+                  20,
+                  20 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '弹幕设置',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 20),
+                    _SliderSetting(
+                      label: '透明度',
+                      valueLabel: opacity.toStringAsFixed(2),
+                      value: opacity,
+                      min: 0.1,
+                      max: 1,
+                      divisions: 18,
+                      onChanged: (value) {
+                        setModalState(() => opacity = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _SliderSetting(
+                      label: '字号',
+                      valueLabel: fontSize.toStringAsFixed(0),
+                      value: fontSize,
+                      min: 14,
+                      max: 40,
+                      divisions: 26,
+                      onChanged: (value) {
+                        setModalState(() => fontSize = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _SliderSetting(
+                      label: '速度',
+                      valueLabel: speed.toStringAsFixed(0),
+                      value: speed,
+                      min: 60,
+                      max: 240,
+                      divisions: 18,
+                      onChanged: (value) {
+                        setModalState(() => speed = value);
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            setModalState(() {
+                              opacity = 0.85;
+                              fontSize = 22;
+                              speed = 120;
+                            });
+                          },
+                          child: const Text('重置'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () async {
+                            await controller.updateDanmakuSettings(
+                              opacity: opacity,
+                              fontSize: fontSize,
+                              speed: speed,
+                            );
+                            if (sheetContext.mounted) {
+                              Navigator.of(sheetContext).pop();
+                            }
+                          },
+                          child: const Text('保存'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final key = (platform: widget.platform, roomId: widget.roomId);
-    final state = ref.watch(liveRoomControllerProvider(key));
-    final notifier = ref.read(liveRoomControllerProvider(key).notifier);
-    final repo = ref.read(liveRepositoryProvider);
-    final cs = Theme.of(context).colorScheme;
+    final providerKey = (platform: widget.platform, roomId: widget.roomId);
+    final state = ref.watch(liveRoomControllerProvider(providerKey));
+    final controller =
+        ref.read(liveRoomControllerProvider(providerKey).notifier);
+    final liveProvider =
+        ref.read(liveProviderRegistryProvider).of(widget.platform);
+    final colorScheme = Theme.of(context).colorScheme;
 
     return PopScope<void>(
       canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop && _isFullscreen) windowManager.setFullScreen(false);
+        if (didPop && _isFullscreen) {
+          windowManager.setFullScreen(false);
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
         body: KeyboardListener(
-          focusNode: FocusNode()..requestFocus(),
+          focusNode: _keyboardFocusNode,
           autofocus: true,
-          onKeyEvent: (e) {
-            if (e is KeyDownEvent) {
-              if (e.logicalKey == LogicalKeyboardKey.escape && _isFullscreen) {
-                _toggleFullscreen();
-              } else if (e.logicalKey == LogicalKeyboardKey.f11 ||
-                  e.logicalKey == LogicalKeyboardKey.keyF) {
-                _toggleFullscreen();
-              }
+          onKeyEvent: (event) {
+            if (event is! KeyDownEvent) return;
+            if (event.logicalKey == LogicalKeyboardKey.escape &&
+                _isFullscreen) {
+              _toggleFullscreen();
+            } else if (event.logicalKey == LogicalKeyboardKey.f11 ||
+                event.logicalKey == LogicalKeyboardKey.keyF) {
+              _toggleFullscreen();
             }
           },
           child: _isFullscreen
-              ? _buildFullscreen(context, state, notifier, repo, cs)
-              : _buildNormal(context, state, notifier, repo, cs),
+              ? _buildFullscreenLayout(
+                  context,
+                  state,
+                  controller,
+                  liveProvider,
+                  colorScheme,
+                )
+              : _buildDefaultLayout(
+                  context,
+                  state,
+                  controller,
+                  liveProvider,
+                  colorScheme,
+                ),
         ),
       ),
     );
   }
 
-  // ── 普通布局（上:16:9播放区 下:信息+控制）───────────────────────────────────
-
-  Widget _buildNormal(BuildContext context, dynamic state, dynamic notifier,
-      dynamic repo, ColorScheme cs) {
+  Widget _buildDefaultLayout(
+    BuildContext context,
+    LiveRoomState state,
+    LiveRoomController controller,
+    LiveProvider liveProvider,
+    ColorScheme colorScheme,
+  ) {
     return Column(
       children: [
-        // 顶部标题栏
-        _buildAppBar(context, state, notifier, cs, fullscreen: false),
-        // 视频区 16:9
+        _buildAppBar(context, state, fullscreen: false),
         AspectRatio(
           aspectRatio: 16 / 9,
-          child: _buildVideoArea(state, notifier, fullscreen: false),
+          child: _buildVideoArea(
+            state,
+            controller,
+            fullscreen: false,
+          ),
         ),
-        // 控制行
-        _buildControlRow(state, notifier, cs),
-        // 主播信息
+        _buildControlRow(context, state, controller),
         Expanded(
-          child: _buildRoomInfo(state, repo, cs),
+          child: _buildRoomInfo(state, liveProvider, colorScheme),
         ),
       ],
     );
   }
 
-  // ── 全屏布局 ────────────────────────────────────────────────────────────────
-
-  Widget _buildFullscreen(BuildContext context, dynamic state, dynamic notifier,
-      dynamic repo, ColorScheme cs) {
+  Widget _buildFullscreenLayout(
+    BuildContext context,
+    LiveRoomState state,
+    LiveRoomController controller,
+    LiveProvider liveProvider,
+    ColorScheme colorScheme,
+  ) {
     return Stack(
       children: [
-        _buildVideoArea(state, notifier, fullscreen: true),
+        Positioned.fill(
+          child: _buildVideoArea(
+            state,
+            controller,
+            fullscreen: true,
+          ),
+        ),
         AnimatedOpacity(
-          opacity: _showControls ? 1.0 : 0.0,
+          opacity: _showControls ? 1 : 0,
           duration: const Duration(milliseconds: 200),
           child: IgnorePointer(
             ignoring: !_showControls,
             child: Column(
               children: [
-                _buildAppBar(context, state, notifier, cs, fullscreen: true),
+                _buildAppBar(context, state, fullscreen: true),
                 const Spacer(),
-                _buildControlRow(state, notifier, cs),
+                _buildControlRow(context, state, controller),
               ],
             ),
           ),
@@ -151,12 +306,12 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     );
   }
 
-  // ── 视频区域 ────────────────────────────────────────────────────────────────
-
-  Widget _buildVideoArea(dynamic state, dynamic notifier,
-      {required bool fullscreen}) {
+  Widget _buildVideoArea(
+    LiveRoomState state,
+    LiveRoomController controller, {
+    required bool fullscreen,
+  }) {
     Widget content;
-
     if (state.loading && state.detail == null) {
       content = const Center(
         child: CircularProgressIndicator(color: Colors.white),
@@ -166,25 +321,44 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.warning_amber_rounded,
-                color: Colors.white54, size: 48),
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.white54,
+              size: 48,
+            ),
             const SizedBox(height: 12),
-            Text(state.error!,
-                style: const TextStyle(color: Colors.white70),
-                textAlign: TextAlign.center),
+            Text(
+              state.error!,
+              style: const TextStyle(color: Colors.white70),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 16),
             FilledButton.tonal(
-              onPressed: () => notifier.init(),
+              onPressed: controller.init,
               child: const Text('重试'),
             ),
           ],
         ),
       );
     } else if (state.currentStreamUrl != null) {
-      content = LivePlayerWidget(
-        key: ValueKey(state.currentStreamUrl),
-        streamUrl: state.currentStreamUrl!,
-        onError: () => notifier.refresh(),
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          LivePlayerWidget(
+            key: ValueKey(state.currentStreamUrl),
+            streamUrl: state.currentStreamUrl!,
+            onError: controller.refresh,
+          ),
+          if (state.supportsDanmaku && state.danmakuEnabled)
+            Positioned.fill(
+              child: DanmakuOverlay(
+                messageStream: controller.danmakuMessages,
+                opacity: state.danmakuOpacity,
+                fontSize: state.danmakuFontSize,
+                speed: state.danmakuSpeed,
+              ),
+            ),
+        ],
       );
     } else {
       content = const Center(
@@ -192,43 +366,40 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
       );
     }
 
-    if (fullscreen) {
-      return MouseRegion(
-        onHover: (_) => _onPointerMove(),
-        child: GestureDetector(
-          onTap: () {
-            setState(() => _showControls = !_showControls);
-            if (_showControls) _startHideTimer();
-          },
-          child: ColoredBox(color: Colors.black, child: content),
-        ),
-      );
-    }
-    return ColoredBox(color: Colors.black, child: content);
+    final child = ColoredBox(color: Colors.black, child: content);
+    if (!fullscreen) return child;
+
+    return MouseRegion(
+      onHover: (_) => _onPointerMove(),
+      child: GestureDetector(
+        onTap: () {
+          setState(() => _showControls = !_showControls);
+          if (_showControls) {
+            _startHideTimer();
+          }
+        },
+        child: child,
+      ),
+    );
   }
 
-  // ── 顶部栏 ──────────────────────────────────────────────────────────────────
-
-  Widget _buildAppBar(BuildContext context, dynamic state, dynamic notifier,
-      ColorScheme cs, {required bool fullscreen}) {
+  Widget _buildAppBar(
+    BuildContext context,
+    LiveRoomState state, {
+    required bool fullscreen,
+  }) {
     final decoration = fullscreen
         ? BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black.withValues(alpha: 0.7),
+                Colors.black.withValues(alpha: 0.72),
                 Colors.transparent,
               ],
             ),
           )
         : const BoxDecoration(color: Colors.black);
-
-    final titleStyle = TextStyle(
-      color: Colors.white,
-      fontSize: 15,
-      fontWeight: FontWeight.w600,
-    );
 
     return DecoratedBox(
       decoration: decoration,
@@ -244,17 +415,23 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
             Expanded(
               child: Text(
                 state.detail?.title ?? widget.title,
-                style: titleStyle,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // 全屏按钮
             IconButton(
               color: Colors.white,
-              icon: Icon(fullscreen
-                  ? Icons.fullscreen_exit_rounded
-                  : Icons.fullscreen_rounded),
+              icon: Icon(
+                fullscreen
+                    ? Icons.fullscreen_exit_rounded
+                    : Icons.fullscreen_rounded,
+              ),
+              tooltip: fullscreen ? '退出全屏' : '全屏',
               onPressed: _toggleFullscreen,
             ),
           ],
@@ -263,67 +440,95 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     );
   }
 
-  // ── 控制行 ──────────────────────────────────────────────────────────────────
-
   Widget _buildControlRow(
-      dynamic state, dynamic notifier, ColorScheme cs) {
-    final qualities = state.qualities as List<LivePlayQuality>;
-    final playUrl = state.playUrl as LivePlayUrl?;
-    final lineCount = playUrl?.urls.length ?? 0;
+    BuildContext context,
+    LiveRoomState state,
+    LiveRoomController controller,
+  ) {
+    final qualities = state.qualities;
+    final lineCount = state.playUrl?.urls.length ?? 0;
 
     return ColoredBox(
       color: Colors.black,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            // 清晰度
             if (qualities.isNotEmpty)
               _DropdownChip<String>(
                 label: '清晰度',
-                value: state.selectedQualityId as String?,
+                value: state.selectedQualityId,
                 items: qualities
-                    .map((q) => DropdownMenuItem(
-                        value: q.id, child: Text(q.name)))
+                    .map(
+                      (quality) => DropdownMenuItem<String>(
+                        value: quality.id,
+                        child: Text(quality.name),
+                      ),
+                    )
                     .toList(),
-                onChanged: (v) {
-                  if (v != null) notifier.selectQuality(v);
+                onChanged: (value) {
+                  if (value != null) {
+                    controller.selectQuality(value);
+                  }
                 },
               ),
-            if (qualities.isNotEmpty && lineCount > 1)
-              const SizedBox(width: 8),
-            // 线路
+            if (qualities.isNotEmpty && lineCount > 1) const SizedBox(width: 8),
             if (lineCount > 1)
               _DropdownChip<int>(
                 label: '线路',
-                value: state.currentLineIndex as int,
+                value: state.currentLineIndex,
                 items: List.generate(
                   lineCount,
-                  (i) => DropdownMenuItem(
-                      value: i, child: Text('线路 ${i + 1}')),
+                  (index) => DropdownMenuItem<int>(
+                    value: index,
+                    child: Text('线路 ${index + 1}'),
+                  ),
                 ),
-                onChanged: (v) {
-                  if (v != null) notifier.selectLine(v);
+                onChanged: (value) {
+                  if (value != null) {
+                    controller.selectLine(value);
+                  }
                 },
               ),
-            const Spacer(),
-            // 刷新
+            const SizedBox(width: 16),
+            if (state.supportsDanmaku) ...[
+              Switch(
+                value: state.danmakuEnabled,
+                onChanged: controller.setDanmakuEnabled,
+                activeThumbColor: Colors.redAccent,
+              ),
+              const SizedBox(width: 4),
+              const Text(
+                '弹幕',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              const SizedBox(width: 4),
+              TextButton(
+                onPressed: () => _showDanmakuSettings(
+                  context,
+                  state,
+                  controller,
+                ),
+                child: const Text('设置'),
+              ),
+              const SizedBox(width: 4),
+            ],
             IconButton(
               color: Colors.white,
               icon: const Icon(Icons.refresh_rounded),
-              tooltip: '刷新流',
-              onPressed: () => notifier.refresh(),
+              tooltip: '刷新播放',
+              onPressed: controller.refresh,
             ),
-            // 收藏
             IconButton(
-              color: (state.isFavorite as bool)
-                  ? Colors.amber
-                  : Colors.white,
-              icon: Icon((state.isFavorite as bool)
-                  ? Icons.favorite_rounded
-                  : Icons.favorite_border_rounded),
-              tooltip: (state.isFavorite as bool) ? '取消收藏' : '收藏',
-              onPressed: () => notifier.toggleFavorite(),
+              color: state.isFavorite ? Colors.amber : Colors.white,
+              icon: Icon(
+                state.isFavorite
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+              ),
+              tooltip: state.isFavorite ? '取消收藏' : '收藏',
+              onPressed: controller.toggleFavorite,
             ),
           ],
         ),
@@ -331,37 +536,32 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     );
   }
 
-  // ── 主播信息 ────────────────────────────────────────────────────────────────
-
-  Widget _buildRoomInfo(dynamic state, dynamic repo, ColorScheme cs) {
-    final detail = state.detail as LiveRoomDetail?;
+  Widget _buildRoomInfo(
+    LiveRoomState state,
+    LiveProvider liveProvider,
+    ColorScheme colorScheme,
+  ) {
+    final detail = state.detail;
     if (detail == null) return const SizedBox.shrink();
 
     final avatarUrl = detail.userAvatar.isNotEmpty
-        ? (repo.proxyUrl(detail.platform, detail.userAvatar) as String)
+        ? liveProvider.resolveImageUrl(detail.userAvatar)
         : null;
-
-    String formatOnline(int n) {
-      if (n >= 10000) return '${(n / 10000).toStringAsFixed(1)}万在线';
-      return '$n 在线';
-    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 主播行
           Row(
             children: [
               CircleAvatar(
                 radius: 22,
-                backgroundColor: cs.surfaceContainerHighest,
+                backgroundColor: colorScheme.surfaceContainerHighest,
                 backgroundImage:
                     avatarUrl != null ? NetworkImage(avatarUrl) : null,
                 child: avatarUrl == null
-                    ? Icon(Icons.person,
-                        color: cs.onSurfaceVariant)
+                    ? Icon(Icons.person, color: colorScheme.onSurfaceVariant)
                     : null,
               ),
               const SizedBox(width: 12),
@@ -372,21 +572,26 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
                     Text(
                       detail.userName,
                       style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 15),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Row(
                       children: [
                         Text(
-                          formatOnline(detail.online),
+                          _formatOnline(detail),
                           style: TextStyle(
-                              fontSize: 12,
-                              color: cs.onSurfaceVariant),
+                            fontSize: 12,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                         const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.red.withValues(alpha: 0.85),
                             borderRadius: BorderRadius.circular(4),
@@ -394,9 +599,10 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
                           child: const Text(
                             'LIVE',
                             style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700),
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ],
@@ -406,33 +612,41 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
               ),
             ],
           ),
-          if (detail.introduction != null &&
-              detail.introduction!.isNotEmpty) ...
-            [
-              const SizedBox(height: 12),
-              Text(
-                detail.introduction!,
-                style: TextStyle(
-                    fontSize: 13, color: cs.onSurfaceVariant),
+          if ((detail.introduction ?? '').isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              detail.introduction!,
+              style: TextStyle(
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant,
               ),
-            ],
-          if (detail.notice != null && detail.notice!.isNotEmpty) ...
-            [
-              const SizedBox(height: 8),
-              Text(
-                '公告：${detail.notice}',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+            ),
+          ],
+          if ((detail.notice ?? '').isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '公告：${detail.notice}',
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.72),
               ),
-            ],
+            ),
+          ],
         ],
       ),
     );
   }
-}
 
-// ── 辅助 widget ─────────────────────────────────────────────────────────────
+  String _formatOnline(LiveRoomDetail detail) {
+    if (detail.online <= 0) {
+      return detail.platform == 'custom_m3u' ? '自定义源' : '在线';
+    }
+    if (detail.online >= 10000) {
+      return '${(detail.online / 10000).toStringAsFixed(1)}万在线';
+    }
+    return '${detail.online} 在线';
+  }
+}
 
 class _DropdownChip<T> extends StatelessWidget {
   const _DropdownChip({
@@ -463,10 +677,59 @@ class _DropdownChip<T> extends StatelessWidget {
           style: const TextStyle(color: Colors.white, fontSize: 13),
           dropdownColor: const Color(0xFF1E1E1E),
           isDense: true,
-          hint: Text(label,
-              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          hint: Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _SliderSetting extends StatelessWidget {
+  const _SliderSetting({
+    required this.label,
+    required this.valueLabel,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String valueLabel;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label),
+            const Spacer(),
+            Text(
+              valueLabel,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: valueLabel,
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
 }

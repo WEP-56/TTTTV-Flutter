@@ -33,6 +33,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
+  brotli:
+    dependency: "direct main"
+    description:
+      name: brotli
+      sha256: "7f891558ed779aab2bed874f0a36b8123f9ff3f19cf6efbee89e18ed294945ae"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.6.0"
   characters:
     dependency: transitive
     description:
@@ -57,8 +65,16 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.19.1"
-  crypto:
+  cross_file:
     dependency: transitive
+    description:
+      name: cross_file
+      sha256: "28bb3ae56f117b5aec029d702a90f57d285cd975c3c5c281eaca38dbc47c5937"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.5+2"
+  crypto:
+    dependency: "direct main"
     description:
       name: crypto
       sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
@@ -129,6 +145,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
+  file_picker:
+    dependency: "direct main"
+    description:
+      name: file_picker
+      sha256: "57d9a1dd5063f85fa3107fb42d1faffda52fdc948cefd5fe5ea85267a5fc7343"
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.3.10"
   fixnum:
     dependency: transitive
     description:
@@ -150,6 +174,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "5.0.0"
+  flutter_plugin_android_lifecycle:
+    dependency: transitive
+    description:
+      name: flutter_plugin_android_lifecycle
+      sha256: "38d1c268de9097ff59cf0e844ac38759fc78f76836d37edad06fa21e182055a0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.34"
   flutter_riverpod:
     dependency: "direct main"
     description:
@@ -669,6 +701,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
+  web_socket:
+    dependency: transitive
+    description:
+      name: web_socket
+      sha256: "34d64019aa8e36bf9842ac014bb5d2f5586ca73df5e4d9bf5c936975cae6982c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.1"
+  web_socket_channel:
+    dependency: "direct main"
+    description:
+      name: web_socket_channel
+      sha256: d645757fb0f4773d602444000a8131ff5d48c9e47adfe9772652dd1a4f2d45c8
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.3"
   win32:
     dependency: transitive
     description:

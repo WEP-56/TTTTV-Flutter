@@ -1,16 +1,13 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
+import '../application/live_controller.dart';
+import '../core/providers/live_provider.dart';
 import 'live_room_page.dart';
 import 'widgets/live_room_card.dart';
-
-const _kPlatforms = [
-  (id: 'bilibili', name: 'Bilibili'),
-  (id: 'douyu', name: '斗鱼'),
-  (id: 'huya', name: '虎牙'),
-  (id: 'douyin', name: '抖音'),
-];
 
 class LivePage extends ConsumerStatefulWidget {
   const LivePage({super.key});
@@ -19,59 +16,337 @@ class LivePage extends ConsumerStatefulWidget {
   ConsumerState<LivePage> createState() => _LivePageState();
 }
 
-class _LivePageState extends ConsumerState<LivePage>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-  final _searchController = TextEditingController();
+class _LivePageState extends ConsumerState<LivePage> {
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _kPlatforms.length, vsync: this);
-    _tabController.addListener(_onTabChanged);
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctrl = ref.read(liveControllerProvider.notifier);
-      ctrl.loadPlatforms();
-      ctrl.loadRecommend();
+      ref.read(liveControllerProvider.notifier).initialize();
     });
   }
 
   @override
   void dispose() {
-    _tabController
-      ..removeListener(_onTabChanged)
-      ..dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _onTabChanged() {
-    if (_tabController.indexIsChanging) return;
-    _searchController.clear();
-    final platform = _kPlatforms[_tabController.index].id;
-    ref.read(liveControllerProvider.notifier).switchPlatform(platform);
+  Future<void> _handleSearch() async {
+    await ref.read(liveControllerProvider.notifier).search(
+          _searchController.text,
+        );
+    if (mounted) {
+      FocusScope.of(context).unfocus();
+    }
   }
 
-  void _handleSearch() {
-    ref
-        .read(liveControllerProvider.notifier)
-        .search(_searchController.text);
-    FocusScope.of(context).unfocus();
+  Future<void> _showAddNetworkSourceDialog(LiveProvider provider) async {
+    final urlController = TextEditingController();
+    final nameController = TextEditingController();
+
+    try {
+      final submit = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('添加网络源'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: urlController,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'M3U 地址',
+                      hintText: 'https://example.com/live.m3u',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: '显示名称（可选）',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('导入'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (submit != true) return;
+
+      await provider.addNetworkSource(
+        urlController.text,
+        sourceName: nameController.text,
+      );
+      await ref.read(liveControllerProvider.notifier).loadRecommend();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('网络源已导入')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$error')),
+      );
+    } finally {
+      urlController.dispose();
+      nameController.dispose();
+    }
+  }
+
+  Future<void> _importLocalSource(LiveProvider provider) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['m3u', 'm3u8'],
+      );
+      final path = result?.files.single.path;
+      if (path == null || path.isEmpty) return;
+
+      await provider.addLocalSource(path);
+      await ref.read(liveControllerProvider.notifier).loadRecommend();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本地源已导入')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _showSourceManager(LiveProvider provider) async {
+    var sourcesFuture = provider.listSources();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> refresh() async {
+              await provider.refreshSources();
+              setModalState(() {
+                sourcesFuture = provider.listSources();
+              });
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          '源管理',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: '刷新',
+                          onPressed: refresh,
+                          icon: const Icon(Icons.refresh_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    FutureBuilder<List<LiveImportedSource>>(
+                      future: sourcesFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+
+                        final sources = snapshot.data ?? const [];
+                        if (sources.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Text('暂无导入源'),
+                          );
+                        }
+
+                        final sourceStore =
+                            ref.read(liveM3uSourceStoreProvider);
+                        return ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 360),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: sources.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final source = sources[index];
+                              final canDelete =
+                                  !sourceStore.isProtectedSource(source);
+
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: CircleAvatar(
+                                  child: Text(source.label.substring(0, 1)),
+                                ),
+                                title: Text(source.name),
+                                subtitle: Text(
+                                  source.value,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: IconButton(
+                                  tooltip: canDelete ? '删除' : '默认源不可删除',
+                                  onPressed: canDelete
+                                      ? () async {
+                                          await provider
+                                              .removeSource(source.id);
+                                          await refresh();
+                                          if (!sheetContext.mounted) return;
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                              content: Text('已删除直播源'),
+                                            ),
+                                          );
+                                        }
+                                      : null,
+                                  icon:
+                                      const Icon(Icons.delete_outline_rounded),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showAuthDialog(LiveProvider provider) async {
+    final cookieController = TextEditingController();
+    final isLoggedIn = await provider.isAuthenticated();
+
+    try {
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: Text('${provider.name} 认证'),
+            content: SizedBox(
+              width: 480,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isLoggedIn
+                        ? '当前已保存 Cookie，可重新覆盖。'
+                        : '粘贴平台 Cookie 以启用高质量播放。',
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: cookieController,
+                    minLines: 4,
+                    maxLines: 8,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'SESSDATA=...; bili_jct=...; DedeUserID=...',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              if (isLoggedIn)
+                TextButton(
+                  onPressed: () async {
+                    await provider.clearAuth();
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('已清除认证信息')),
+                    );
+                  },
+                  child: const Text('清除'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final cookie = cookieController.text.trim();
+                  if (cookie.isEmpty) return;
+                  await provider.saveCookie(cookie);
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('认证信息已保存')),
+                  );
+                },
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      cookieController.dispose();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(liveControllerProvider);
-    final repo = ref.watch(liveRepositoryProvider);
-    final cs = Theme.of(context).colorScheme;
+    final registry = ref.watch(liveProviderRegistryProvider);
+    final activeProvider = state.activeProviderId.isEmpty
+        ? null
+        : registry.of(state.activeProviderId);
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ── 标题栏 ──────────────────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 16, 4),
+          padding: const EdgeInsets.fromLTRB(20, 20, 16, 8),
           child: Row(
             children: [
               Expanded(
@@ -80,34 +355,69 @@ class _LivePageState extends ConsumerState<LivePage>
                   children: [
                     Text(
                       '直播',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                      style:
+                          Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Bilibili · 斗鱼 · 虎牙 · 抖音',
+                      activeProvider?.name ?? '加载中',
                       style: TextStyle(
-                          fontSize: 12, color: cs.onSurfaceVariant),
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
               ),
+              if (activeProvider != null && activeProvider.supportsImport) ...[
+                IconButton(
+                  tooltip: '添加网络源',
+                  onPressed: () => _showAddNetworkSourceDialog(activeProvider),
+                  icon: const Icon(Icons.cloud_download_rounded),
+                ),
+                IconButton(
+                  tooltip: '导入本地文件',
+                  onPressed: () => _importLocalSource(activeProvider),
+                  icon: const Icon(Icons.upload_file_rounded),
+                ),
+                IconButton(
+                  tooltip: '源管理',
+                  onPressed: () => _showSourceManager(activeProvider),
+                  icon: const Icon(Icons.folder_open_rounded),
+                ),
+              ],
+              if (activeProvider != null && activeProvider.supportsAuth)
+                IconButton(
+                  tooltip: '认证',
+                  onPressed: () => _showAuthDialog(activeProvider),
+                  icon: const Icon(Icons.login_rounded),
+                ),
             ],
           ),
         ),
-
-        // ── 平台 Tab ────────────────────────────────────────────────────────
-        TabBar(
-          controller: _tabController,
-          isScrollable: false,
-          tabs: _kPlatforms
-              .map((p) => Tab(text: p.name))
-              .toList(),
-        ),
-
-        // ── 搜索栏 ─────────────────────────────────────────────────────────
+        if (state.providers.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final provider in state.providers) ...[
+                    ChoiceChip(
+                      label: Text(provider.name),
+                      selected: provider.id == state.activeProviderId,
+                      onSelected: (_) => ref
+                          .read(liveControllerProvider.notifier)
+                          .switchProvider(provider.id),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Row(
@@ -115,13 +425,17 @@ class _LivePageState extends ConsumerState<LivePage>
               Expanded(
                 child: TextField(
                   controller: _searchController,
+                  enabled: activeProvider?.supportsSearch ?? false,
                   decoration: InputDecoration(
-                    hintText: '搜索直播间标题 / 主播',
+                    hintText: '搜索直播标题 / 分组 / 来源',
                     isDense: true,
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear, size: 18),
@@ -130,6 +444,7 @@ class _LivePageState extends ConsumerState<LivePage>
                               ref
                                   .read(liveControllerProvider.notifier)
                                   .loadRecommend();
+                              setState(() {});
                             },
                           )
                         : null,
@@ -140,7 +455,10 @@ class _LivePageState extends ConsumerState<LivePage>
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: state.loading ? null : _handleSearch,
+                onPressed:
+                    state.loading || !(activeProvider?.supportsSearch ?? false)
+                        ? null
+                        : _handleSearch,
                 child: const Text('搜索'),
               ),
               const SizedBox(width: 6),
@@ -152,23 +470,26 @@ class _LivePageState extends ConsumerState<LivePage>
                         ref
                             .read(liveControllerProvider.notifier)
                             .loadRecommend();
+                        setState(() {});
                       },
                 child: const Text('推荐'),
               ),
             ],
           ),
         ),
-
-        // ── 内容区 ─────────────────────────────────────────────────────────
         Expanded(
-          child: _buildBody(context, state, repo, cs),
+          child: _buildBody(context, state, activeProvider, colorScheme),
         ),
       ],
     );
   }
 
-  Widget _buildBody(BuildContext context, dynamic state, dynamic repo,
-      ColorScheme cs) {
+  Widget _buildBody(
+    BuildContext context,
+    LiveState state,
+    LiveProvider? activeProvider,
+    ColorScheme colorScheme,
+  ) {
     if (state.loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -178,17 +499,21 @@ class _LivePageState extends ConsumerState<LivePage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.warning_amber_rounded,
-                size: 48, color: cs.error),
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 48,
+              color: colorScheme.error,
+            ),
             const SizedBox(height: 12),
-            Text(state.error!,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: cs.onSurfaceVariant)),
+            Text(
+              state.error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: () => ref
-                  .read(liveControllerProvider.notifier)
-                  .loadRecommend(),
+              onPressed: () =>
+                  ref.read(liveControllerProvider.notifier).loadRecommend(),
               child: const Text('重试'),
             ),
           ],
@@ -201,12 +526,19 @@ class _LivePageState extends ConsumerState<LivePage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.live_tv_outlined,
-                size: 64,
-                color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+            Icon(
+              Icons.playlist_play_rounded,
+              size: 64,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+            ),
             const SizedBox(height: 12),
-            Text('暂无内容，试试搜索或切换平台',
-                style: TextStyle(color: cs.onSurfaceVariant)),
+            Text(
+              activeProvider?.supportsImport == true
+                  ? '暂无可用直播源，可以先导入网络源或本地 M3U 文件'
+                  : '暂无内容',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       );
@@ -221,24 +553,25 @@ class _LivePageState extends ConsumerState<LivePage>
         childAspectRatio: 0.72,
       ),
       itemCount: state.rooms.length,
-      itemBuilder: (context, i) {
-        final room = state.rooms[i];
+      itemBuilder: (context, index) {
+        final room = state.rooms[index];
         return LiveRoomCard(
           room: room,
-          proxyUrl: repo.proxyUrl,
+          resolveImageUrl: (_, url) =>
+              activeProvider?.resolveImageUrl(url) ?? url,
           onTap: () => _openRoom(context, room),
         );
       },
     );
   }
 
-  void _openRoom(BuildContext context, dynamic room) {
+  void _openRoom(BuildContext context, LiveRoomItem room) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LiveRoomPage(
-          platform: room.platform as String,
-          roomId: room.roomId as String,
-          title: room.title as String,
+          platform: room.platform,
+          roomId: room.roomId,
+          title: room.title,
         ),
       ),
     );
