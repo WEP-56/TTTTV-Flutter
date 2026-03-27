@@ -39,6 +39,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _showControls = true;
   Timer? _hideTimer;
   bool _isFullscreen = false;
+  bool _showFullscreenPanel = false;
   double _panelWidth = 280;
   bool _panelCollapsed = false;
   static const double _panelMinWidth = 180;
@@ -112,10 +113,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     await _loadEpisode();
   }
 
-  Future<void> _toggleFullscreen() async {
+  void _toggleFullscreen() {
     final next = !_isFullscreen;
-    await windowManager.setFullScreen(next);
     setState(() => _isFullscreen = next);
+    windowManager.setFullScreen(next);
   }
 
   @override
@@ -221,16 +222,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     return Stack(
       children: [
         _buildVideoArea(cs, fullscreen: true),
-        // 右侧浮动集数抽屉（鼠标移到右边缘时显示）
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 200),
-          right: _showControls ? 0 : -280,
+        // 右侧触发区：鼠标移入时展开集数抽屉
+        Positioned(
+          right: 0,
           top: 0,
           bottom: 0,
-          width: 280,
-          child: Material(
-            color: cs.surface.withValues(alpha: 0.92),
-            child: _buildSidePanel(cs),
+          width: _showFullscreenPanel ? 280 : 24,
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _showFullscreenPanel = true),
+            onExit: (_) => setState(() => _showFullscreenPanel = false),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: _showFullscreenPanel ? 280 : 24,
+              child: _showFullscreenPanel
+                  ? Material(
+                      color: cs.surface.withValues(alpha: 0.95),
+                      child: _buildSidePanel(cs),
+                    )
+                  : const ColoredBox(
+                      color: Colors.transparent,
+                    ),
+            ),
           ),
         ),
       ],
