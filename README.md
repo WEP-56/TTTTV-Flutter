@@ -42,3 +42,7 @@ cd D:\TTTTV-Flutter
 .\build_windows_installer.ps1
 ```
 产物通常在 ~\TTTTV-Flutter\build\installers\TTTTV-Windows-0.1.0_1-Setup.exe
+
+
+## 致谢
+感谢社区：https://linux.do/ 的支持
