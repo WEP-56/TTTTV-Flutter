@@ -111,14 +111,26 @@ void _triggerSearch(WidgetRef ref, String title) {
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
+  void _refreshRecommendations(WidgetRef ref) {
+    ref.invalidate(bangumiRecommendationsProvider);
+    ref.invalidate(maoyanRecommendationsProvider);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return CustomScrollView(
       slivers: [
-        const SliverAppBar(
-          title: Text('发现'),
+        SliverAppBar(
+          title: const Text('发现'),
           floating: true,
           scrolledUnderElevation: 0,
+          actions: [
+            IconButton(
+              tooltip: '刷新推荐',
+              onPressed: () => _refreshRecommendations(ref),
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
         ),
         _RecommendationSection(
           title: '动漫区',
