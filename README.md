@@ -1,31 +1,60 @@
-TTTTV flutter版本，施工中
+# TTTTV Flutter
 
-## 启动后端：
-cd Moovie
-cargo build
-cargo run
-## 启动前端：
-cd ttttv_flutter
-flutter pub get
-flutter run -d windows
-## 当前施工落地工作计划表：
-D:\TTTTV-Flutter\LIVE_DART_REFACTOR_TODO.md
-## windows端打包
-### 方法1：
+<p align="center">
+  <img src="assest/logo.png" width="112" alt="TTTTV Logo" />
+</p>
+
+
+<p align="center">
+  Windows 优先的影视、直播搜索与观看项目。<br />
+  当前阶段以功能稳定、桌面体验调优和小问题修复为主。
+</p>
+
+## 项目结构
+
+- `ttttv_flutter`：Flutter Windows 客户端
+- `Moovie`：影视模块后端服务
+- `build_windows_flutter_release.ps1`：绿色版打包脚本
+- `build_windows_installer.ps1`：Windows 安装包打包脚本
+
+## 本地运行
+
+### 1. 启动后端
+
 ```powershell
 cd D:\TTTTV-Flutter\Moovie
+cargo build
+cargo run
+```
+
+### 2. 启动前端
+
+```powershell
+cd D:\TTTTV-Flutter\ttttv_flutter
+flutter pub get
+flutter run -d windows
+```
+
+## Windows 打包
+
+### 方法 1：手动打包
+
+```powershell
+cd ~\TTTTV-Flutter\Moovie
 cargo build --release
 
-cd D:\TTTTV-Flutter\ttttv_flutter
+cd ~\TTTTV-Flutter\ttttv_flutter
 flutter build windows --release
 
-后端exe移入
-Copy-Item `
-  D:\TTTTV-Flutter\Moovie\target\release\moovie.exe `
-  D:\TTTTV-Flutter\ttttv_flutter\build\windows\x64\runner\Release\moovie.exe `
+Copy-Item 
+  `~\TTTTV-Flutter\Moovie\target\release\moovie.exe`
+  `~\TTTTV-Flutter\ttttv_flutter\build\windows\x64\runner\Release\moovie.exe `
   -Force
+```
 
-添加start_ttttv.bat
+如果你需要绿色启动脚本，可以在发布目录内补一个 `start_ttttv.bat`：
+
+```bat
 @echo off
 cd /d %~dp0
 start "" /B moovie.exe
@@ -33,16 +62,34 @@ timeout /t 2 /nobreak >nul
 start "" ttttv_flutter.exe
 ```
 
-### 方法二
+### 方法 2：使用仓库脚本
+
 ```powershell
-cd D:\TTTTV-Flutter
-# 免安装绿色
-./build_windows_flutter_release.ps1
+cd ~\TTTTV-Flutter
+
+# 绿色版
+.\build_windows_flutter_release.ps1
+
 # 安装包
 .\build_windows_installer.ps1
 ```
-产物通常在 ~\TTTTV-Flutter\build\installers\TTTTV-Windows-0.1.0_1-Setup.exe
+
+安装包产物通常位于：
+
+```text
+~\TTTTV-Flutter\build\installers\TTTTV-Windows-0.1.0_1-Setup.exe
+```
+
+## 开发说明
+
+- 直播模块已接入多个平台，并持续针对移动端等其他设备体验做调优和发布。
+
+
 
 
 ## 致谢
-感谢社区：https://linux.do/ 的支持
+
+感谢社区 [linux.do](https://linux.do/) 的支持。
+
+## License
+MIT
