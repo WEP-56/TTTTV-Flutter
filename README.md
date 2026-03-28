@@ -36,6 +36,9 @@ flutter run -d windows
 ```
 
 ## Windows 打包
+打包前需做：
+前往ttttv_flutter\pubspec.yaml
+修改版本号
 
 ### 方法 1：手动打包
 

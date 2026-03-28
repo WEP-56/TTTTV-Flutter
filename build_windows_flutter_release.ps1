@@ -6,6 +6,18 @@ $backendDir = Join-Path $repoRoot 'Moovie'
 $releaseDir = Join-Path $flutterDir 'build\windows\x64\runner\Release'
 $backendExe = Join-Path $backendDir 'target\release\moovie.exe'
 $releaseBackendExe = Join-Path $releaseDir 'moovie.exe'
+$sourceIcon = Join-Path $repoRoot 'assest\doubaoTTTTV.ico'
+$runnerIcon = Join-Path $flutterDir 'windows\runner\resources\app_icon.ico'
+$runnerRc = Join-Path $flutterDir 'windows\runner\Runner.rc'
+
+if (Test-Path $sourceIcon) {
+    Write-Host 'Syncing Windows app icon...' -ForegroundColor Green
+    Copy-Item $sourceIcon $runnerIcon -Force
+
+    $now = Get-Date
+    (Get-Item $runnerIcon).LastWriteTime = $now
+    (Get-Item $runnerRc).LastWriteTime = $now
+}
 
 Write-Host 'Building Moovie release...' -ForegroundColor Green
 Push-Location $backendDir

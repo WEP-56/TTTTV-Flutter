@@ -1,7 +1,7 @@
 name: ttttv_flutter
-description: Flutter Windows-first client for TTTTV.
+description: Flutter client for TTTTV.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.2+2
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
