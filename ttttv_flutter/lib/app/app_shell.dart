@@ -100,26 +100,37 @@ class _SideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final index = _Section.values.indexOf(current);
+    final mainSections =
+        _Section.values.where((s) => s != _Section.settings).toList();
+    final selectedIndex =
+        current == _Section.settings ? null : mainSections.indexOf(current);
 
     return NavigationRail(
       backgroundColor: colorScheme.surfaceContainerLowest,
-      selectedIndex: index,
+      selectedIndex: selectedIndex,
       labelType: NavigationRailLabelType.selected,
       minWidth: 72,
-      leading: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(
-          'TTV',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
-            color: colorScheme.primary,
-            letterSpacing: 1.5,
-          ),
+      leading: const SizedBox(height: 12),
+      trailing: Expanded(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Container(
+              width: 36,
+              height: 1,
+              margin: const EdgeInsets.only(bottom: 12),
+              color: colorScheme.outlineVariant,
+            ),
+            _RailBottomButton(
+              section: _Section.settings,
+              selected: current == _Section.settings,
+              onTap: () => onSelect(_Section.settings),
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
-      destinations: _Section.values
+      destinations: mainSections
           .map(
             (s) => NavigationRailDestination(
               icon: Icon(s.icon),
@@ -128,7 +139,64 @@ class _SideRail extends StatelessWidget {
             ),
           )
           .toList(),
-      onDestinationSelected: (i) => onSelect(_Section.values[i]),
+      onDestinationSelected: (i) => onSelect(mainSections[i]),
+    );
+  }
+}
+
+class _RailBottomButton extends StatelessWidget {
+  const _RailBottomButton({
+    required this.section,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _Section section;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: 48,
+              height: 36,
+              decoration: BoxDecoration(
+                color: selected
+                    ? colorScheme.secondaryContainer
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Icon(
+                selected ? section.selectedIcon : section.icon,
+                color: selected
+                    ? colorScheme.onSecondaryContainer
+                    : colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              section.label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: selected
+                        ? colorScheme.onSurface
+                        : colorScheme.onSurfaceVariant,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -261,7 +329,8 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _WinBtn extends StatefulWidget {
-  const _WinBtn({required this.icon, required this.onTap, this.isClose = false});
+  const _WinBtn(
+      {required this.icon, required this.onTap, this.isClose = false});
   final IconData icon;
   final VoidCallback onTap;
   final bool isClose;
@@ -295,9 +364,8 @@ class _WinBtnState extends State<_WinBtn> {
           child: Icon(
             widget.icon,
             size: 16,
-            color: _hovered && widget.isClose
-                ? cs.onError
-                : cs.onSurfaceVariant,
+            color:
+                _hovered && widget.isClose ? cs.onError : cs.onSurfaceVariant,
           ),
         ),
       ),

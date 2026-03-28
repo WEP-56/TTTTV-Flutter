@@ -9,9 +9,9 @@ class SettingsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs = Theme.of(context).colorScheme;
-    final currentSeed = ref.watch(
-        themeProvider.select((s) => s.seedColor));
+    final colorScheme = Theme.of(context).colorScheme;
+    final currentSeed =
+        ref.watch(themeProvider.select((state) => state.seedColor));
 
     return Scaffold(
       appBar: AppBar(
@@ -20,22 +20,20 @@ class SettingsPage extends ConsumerWidget {
       ),
       body: ListView(
         children: [
-          // ── Appearance ──────────────────────────────────
-          _SectionHeader(title: '外观'),
+          const _SectionHeader(title: '外观'),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('主题色',
-                    style: Theme.of(context).textTheme.bodyMedium),
+                Text('主题色', style: Theme.of(context).textTheme.bodyMedium),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 10,
                   runSpacing: 10,
                   children: kAccentPresets.map((preset) {
-                    final selected = preset.color.toARGB32() ==
-                        currentSeed.toARGB32();
+                    final selected =
+                        preset.color.toARGB32() == currentSeed.toARGB32();
                     return GestureDetector(
                       onTap: () => ref
                           .read(themeProvider.notifier)
@@ -51,27 +49,29 @@ class SettingsPage extends ConsumerWidget {
                             shape: BoxShape.circle,
                             border: selected
                                 ? Border.all(
-                                    color: cs.onSurface,
+                                    color: colorScheme.onSurface,
                                     width: 2.5,
                                   )
                                 : null,
                             boxShadow: selected
                                 ? [
                                     BoxShadow(
-                                      color: preset.color
-                                          .withValues(alpha: 0.5),
+                                      color:
+                                          preset.color.withValues(alpha: 0.5),
                                       blurRadius: 8,
-                                    )
+                                    ),
                                   ]
                                 : null,
                           ),
                           child: selected
-                              ? Icon(Icons.check,
+                              ? Icon(
+                                  Icons.check,
                                   size: 18,
                                   color: ThemeData(
                                     colorScheme: ColorScheme.fromSeed(
                                         seedColor: preset.color),
-                                  ).colorScheme.onPrimary)
+                                  ).colorScheme.onPrimary,
+                                )
                               : null,
                         ),
                       ),
@@ -82,12 +82,11 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           const Divider(height: 1),
-          // ── Sources ─────────────────────────────────────
-          _SectionHeader(title: '视频源'),
+          const _SectionHeader(title: '片源'),
           ListTile(
             leading: const Icon(Icons.tune_rounded),
             title: const Text('片源管理'),
-            subtitle: const Text('添加、删除、启用视频片源'),
+            subtitle: const Text('管理已安装片源，支持新增、删除、启用和远程导入'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SourcesPage()),
@@ -101,6 +100,7 @@ class SettingsPage extends ConsumerWidget {
 
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title});
+
   final String title;
 
   @override
