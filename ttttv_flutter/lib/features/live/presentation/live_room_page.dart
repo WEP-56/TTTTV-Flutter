@@ -34,6 +34,7 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
 
   bool _showControls = true;
   bool _isFullscreen = false;
+  bool _isTogglingFullscreen = false;
   Timer? _hideTimer;
 
   @override
@@ -79,12 +80,24 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     _startHideTimer();
   }
 
-  void _toggleFullscreen() {
+  Future<void> _toggleFullscreen() async {
+    if (_isTogglingFullscreen) return;
     final next = !_isFullscreen;
-    setState(() => _isFullscreen = next);
-    windowManager.setFullScreen(next);
+    setState(() => _isTogglingFullscreen = true);
+    await windowManager.setFullScreen(next);
+    if (!mounted) return;
+    setState(() {
+      _isFullscreen = next;
+      _isTogglingFullscreen = false;
+      if (next) {
+        _showControls = true;
+      }
+    });
     if (next) {
       _startHideTimer();
+    } else {
+      _hideTimer?.cancel();
+      _showControls = true;
     }
   }
 
@@ -221,121 +234,25 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
             if (event is! KeyDownEvent) return;
             if (event.logicalKey == LogicalKeyboardKey.escape &&
                 _isFullscreen) {
-              _toggleFullscreen();
+              unawaited(_toggleFullscreen());
             } else if (event.logicalKey == LogicalKeyboardKey.f11 ||
                 event.logicalKey == LogicalKeyboardKey.keyF) {
-              _toggleFullscreen();
+              unawaited(_toggleFullscreen());
             }
           },
-          child: _isFullscreen
-              ? _buildFullscreenLayout(
-                  context,
-                  state,
-                  controller,
-                  liveProvider,
-                  colorScheme,
-                )
-              : _buildDefaultLayout(
-                  context,
-                  state,
-                  controller,
-                  liveProvider,
-                  colorScheme,
-                ),
+          child: _buildLayout(
+            context,
+            state,
+            controller,
+            liveProvider,
+            colorScheme,
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildDefaultLayout(
-    BuildContext context,
-    LiveRoomState state,
-    LiveRoomController controller,
-    LiveProvider liveProvider,
-    ColorScheme colorScheme,
-  ) {
-    return Column(
-      children: [
-        _buildAppBar(context, state, fullscreen: false),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final horizontalPadding =
-                  constraints.maxWidth >= 1200 ? 24.0 : 12.0;
-              final verticalPadding =
-                  constraints.maxHeight >= 760 ? 18.0 : 12.0;
-              final infoHeight = math.min(
-                64.0,
-                math.max(52.0, constraints.maxHeight * 0.08),
-              );
-              final maxContentWidth = math.min(constraints.maxWidth, 1440.0);
-              final playerMaxHeight = math.max(
-                220.0,
-                constraints.maxHeight - infoHeight - 72.0 - verticalPadding * 2,
-              );
-              final playerMaxWidth =
-                  math.max(320.0, maxContentWidth - horizontalPadding * 2);
-
-              return Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxContentWidth),
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      verticalPadding,
-                      horizontalPadding,
-                      verticalPadding,
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: playerMaxWidth,
-                                maxHeight: playerMaxHeight,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(18),
-                                child: AspectRatio(
-                                  aspectRatio: 16 / 9,
-                                  child: _buildVideoArea(
-                                    state,
-                                    controller,
-                                    fullscreen: false,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _buildWindowedControlBar(context, state, controller),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: infoHeight,
-                          width: double.infinity,
-                          child: _buildInfoStrip(
-                            state,
-                            liveProvider,
-                            colorScheme,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFullscreenLayout(
+  Widget _buildLayout(
     BuildContext context,
     LiveRoomState state,
     LiveRoomController controller,
@@ -344,36 +261,154 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
   ) {
     return Stack(
       children: [
-        Positioned.fill(
-          child: _buildVideoArea(
-            state,
-            controller,
-            fullscreen: true,
-          ),
+        Column(
+          children: [
+            if (!_isFullscreen) _buildAppBar(context, state, fullscreen: false),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final horizontalPadding = _isFullscreen
+                      ? 0.0
+                      : (constraints.maxWidth >= 1200 ? 24.0 : 12.0);
+                  final verticalPadding = _isFullscreen
+                      ? 0.0
+                      : (constraints.maxHeight >= 760 ? 18.0 : 12.0);
+                  final infoHeight = math.min(
+                    64.0,
+                    math.max(52.0, constraints.maxHeight * 0.08),
+                  );
+                  final maxContentWidth = _isFullscreen
+                      ? constraints.maxWidth
+                      : math.min(constraints.maxWidth, 1440.0);
+                  final contentWidth =
+                      math.max(320.0, maxContentWidth - horizontalPadding * 2);
+                  final availablePlayerHeight = _isFullscreen
+                      ? math.max(
+                          1.0, constraints.maxHeight - verticalPadding * 2)
+                      : math.max(
+                          220.0,
+                          constraints.maxHeight -
+                              infoHeight -
+                              72.0 -
+                              verticalPadding * 2,
+                        );
+
+                  var playerWidth = contentWidth;
+                  var playerHeight = _isFullscreen
+                      ? availablePlayerHeight
+                      : playerWidth / (16 / 9);
+
+                  if (!_isFullscreen && playerHeight > availablePlayerHeight) {
+                    playerHeight = availablePlayerHeight;
+                    playerWidth = playerHeight * (16 / 9);
+                  }
+
+                  return Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: maxContentWidth),
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          verticalPadding,
+                          horizontalPadding,
+                          verticalPadding,
+                        ),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                child: SizedBox(
+                                  width: playerWidth,
+                                  height: playerHeight,
+                                  child: _buildPlayerSurface(
+                                    state,
+                                    controller,
+                                    fullscreen: _isFullscreen,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (!_isFullscreen) ...[
+                              const SizedBox(height: 12),
+                              _buildWindowedControlBar(
+                                  context, state, controller),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: infoHeight,
+                                width: double.infinity,
+                                child: _buildInfoStrip(
+                                  state,
+                                  liveProvider,
+                                  colorScheme,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
-        AnimatedOpacity(
-          opacity: _showControls ? 1 : 0,
-          duration: const Duration(milliseconds: 200),
-          child: IgnorePointer(
-            ignoring: !_showControls,
-            child: Column(
-              children: [
-                _buildAppBar(context, state, fullscreen: true),
-                const Spacer(),
-                _buildControlRow(context, state, controller),
-              ],
+        if (_isFullscreen)
+          AnimatedOpacity(
+            opacity: _showControls ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !_showControls,
+              child: Column(
+                children: [
+                  _buildAppBar(context, state, fullscreen: true),
+                  const Spacer(),
+                  _buildControlRow(context, state, controller),
+                ],
+              ),
             ),
           ),
-        ),
       ],
     );
   }
 
-  Widget _buildVideoArea(
+  Widget _buildPlayerSurface(
     LiveRoomState state,
     LiveRoomController controller, {
     required bool fullscreen,
   }) {
+    final child = MouseRegion(
+      onHover: fullscreen ? (_) => _onPointerMove() : null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: fullscreen
+            ? () {
+                setState(() => _showControls = !_showControls);
+                if (_showControls) {
+                  _startHideTimer();
+                }
+              }
+            : null,
+        child: ClipRRect(
+          borderRadius:
+              fullscreen ? BorderRadius.zero : BorderRadius.circular(18),
+          child: ColoredBox(
+            color: Colors.black,
+            child: _buildPlayerContent(state, controller),
+          ),
+        ),
+      ),
+    );
+
+    return child;
+  }
+
+  Widget _buildPlayerContent(
+    LiveRoomState state,
+    LiveRoomController controller,
+  ) {
     Widget content;
     if (state.loading && state.detail == null) {
       content = const Center(
@@ -408,9 +443,6 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
         fit: StackFit.expand,
         children: [
           LivePlayerWidget(
-            key: ValueKey(
-              '${state.currentStreamUrl}|${state.currentStreamHeaders}',
-            ),
             streamUrl: state.currentStreamUrl!,
             httpHeaders: state.currentStreamHeaders,
             onError: controller.refresh,
@@ -432,21 +464,7 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
       );
     }
 
-    final child = ColoredBox(color: Colors.black, child: content);
-    if (!fullscreen) return child;
-
-    return MouseRegion(
-      onHover: (_) => _onPointerMove(),
-      child: GestureDetector(
-        onTap: () {
-          setState(() => _showControls = !_showControls);
-          if (_showControls) {
-            _startHideTimer();
-          }
-        },
-        child: child,
-      ),
-    );
+    return content;
   }
 
   Widget _buildAppBar(
@@ -479,16 +497,14 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
               onPressed: () => Navigator.of(context).pop(),
             ),
             Expanded(
-              child: Text(
-                state.detail?.title ?? widget.title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: fullscreen
+                  ? _buildRoomTitle(state)
+                  : DragToMoveArea(
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: _buildRoomTitle(state),
+                      ),
+                    ),
             ),
             IconButton(
               color: Colors.white,
@@ -498,11 +514,24 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
                     : Icons.fullscreen_rounded,
               ),
               tooltip: fullscreen ? '退出全屏' : '全屏',
-              onPressed: _toggleFullscreen,
+              onPressed: () => unawaited(_toggleFullscreen()),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildRoomTitle(LiveRoomState state) {
+    return Text(
+      state.detail?.title ?? widget.title,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 

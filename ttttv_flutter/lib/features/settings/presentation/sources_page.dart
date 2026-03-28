@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
@@ -53,7 +54,16 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('片源管理'),
+        titleSpacing: 0,
+        title: const DragToMoveArea(
+          child: SizedBox(
+            width: double.infinity,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('片源管理'),
+            ),
+          ),
+        ),
         actions: [
           IconButton(
             tooltip: '刷新',
