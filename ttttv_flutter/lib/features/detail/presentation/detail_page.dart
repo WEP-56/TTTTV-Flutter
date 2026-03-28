@@ -47,16 +47,17 @@ class _DetailPageState extends ConsumerState<DetailPage> {
           );
       PlayResult? playResult;
       if (detail.vodPlayUrl.trim().isNotEmpty) {
-        playResult =
-            await ref.read(playRepositoryProvider).parsePlayUrl(detail.vodPlayUrl);
+        playResult = await ref
+            .read(playRepositoryProvider)
+            .parsePlayUrl(detail.vodPlayUrl);
       }
       final isFavorited = await ref
           .read(favoritesRepositoryProvider)
           .checkFavorite(vodId: detail.vodId, sourceKey: detail.sourceKey);
       final history = await ref.read(historyRepositoryProvider).fetchHistory();
       final match = history
-          .where((h) =>
-              h.vodId == detail.vodId && h.sourceKey == detail.sourceKey)
+          .where(
+              (h) => h.vodId == detail.vodId && h.sourceKey == detail.sourceKey)
           .toList();
       final resumeItem = match.isEmpty ? null : match.first;
       var si = 0, ei = 0;
@@ -147,8 +148,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                   style: TextStyle(color: cs.error),
                   textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              FilledButton(
-                  onPressed: _load, child: const Text('重试')),
+              FilledButton(onPressed: _load, child: const Text('重试')),
             ],
           ),
         ),
@@ -207,7 +207,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
               pr.sources[si].name.isEmpty
-                  ? '播放源 ${si + 1}'
+                  ? '片源 ${_detail.sourceKey} · 播放源 ${si + 1}'
                   : pr.sources[si].name,
               style: Theme.of(context)
                   .textTheme
@@ -219,8 +219,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           sliver: SliverGrid.builder(
-            gridDelegate:
-                const SliverGridDelegateWithMaxCrossAxisExtent(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 100,
               childAspectRatio: 2.4,
               mainAxisSpacing: 6,
@@ -234,13 +233,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
               return FilledButton.tonal(
                 style: isResume
                     ? FilledButton.styleFrom(
-                        backgroundColor:
-                            cs.primaryContainer,
-                        foregroundColor:
-                            cs.onPrimaryContainer,
+                        backgroundColor: cs.primaryContainer,
+                        foregroundColor: cs.onPrimaryContainer,
                       )
                     : null,
-                onPressed: () => _openPlayer(si, ei, isResume ? _resumeProgress : 0),
+                onPressed: () =>
+                    _openPlayer(si, ei, isResume ? _resumeProgress : 0),
                 child: Text(
                   ep.name,
                   maxLines: 1,
@@ -388,6 +386,12 @@ class _DetailSliverAppBar extends StatelessWidget {
                           spacing: 4,
                           runSpacing: 4,
                           children: [
+                            _Tag(
+                              '片源 ${detail.sourceKey}',
+                              color:
+                                  cs.tertiaryContainer.withValues(alpha: 0.9),
+                              textColor: cs.onTertiaryContainer,
+                            ),
                             if (detail.vodYear != null &&
                                 detail.vodYear!.isNotEmpty)
                               _Tag(detail.vodYear!),
@@ -585,9 +589,7 @@ class _MetaChips extends StatelessWidget {
                   child: Text(
                     label,
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
                 ),
