@@ -1,10 +1,10 @@
 use axum::extract::ws::{Message as AxumMessage, WebSocket};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use jcers::{Jce, JceStruct, JceValue, JceMut};
+use jcers::{Jce, JceMut, JceStruct, JceValue};
 use std::time::Duration;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as WsMessage};
+use tokio_tungstenite::tungstenite::{Message as WsMessage, client::IntoClientRequest};
 
 use crate::live::models::{LiveMessage, LiveMessageColor, LiveMessageType};
 use crate::live::providers::huya::HuyaDanmakuArgs;
@@ -14,7 +14,9 @@ const HEARTBEAT: [u8; 9] = [0, 20, 29, 0, 12, 44, 54, 0, 76]; // base64("ABQdAAw
 
 pub async fn bridge(args: HuyaDanmakuArgs, socket: WebSocket) -> Result<(), MoovieError> {
     if args.ayyuid <= 0 || args.top_sid <= 0 {
-        return Err(MoovieError::InvalidParameter("虎牙弹幕参数无效".to_string()));
+        return Err(MoovieError::InvalidParameter(
+            "虎牙弹幕参数无效".to_string(),
+        ));
     }
 
     let ws_url = "wss://cdnws.api.huya.com";
@@ -146,7 +148,11 @@ fn decode_huya_message(data: &[u8]) -> Vec<LiveMessage> {
                 kind: LiveMessageType::Online,
                 user_name: "".to_string(),
                 message: "".to_string(),
-                color: LiveMessageColor { r: 255, g: 255, b: 255 },
+                color: LiveMessageColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
                 data: Some(serde_json::json!(online)),
             });
         }
@@ -188,7 +194,11 @@ fn get_tag_struct(data: &[u8], tag: u8) -> Option<JceStruct> {
 
 fn color_number_to_rgb(color: i64) -> LiveMessageColor {
     if color <= 0 {
-        return LiveMessageColor { r: 255, g: 255, b: 255 };
+        return LiveMessageColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
     }
     let mut hex = format!("{:x}", color as u64);
     if hex.len() == 4 {
@@ -198,7 +208,11 @@ fn color_number_to_rgb(color: i64) -> LiveMessageColor {
         hex = hex.chars().skip(2).collect();
     }
     if hex.len() != 6 {
-        return LiveMessageColor { r: 255, g: 255, b: 255 };
+        return LiveMessageColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
     }
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);

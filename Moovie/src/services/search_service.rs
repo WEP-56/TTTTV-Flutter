@@ -1,4 +1,4 @@
-use crate::models::{VodItem, Site};
+use crate::models::{Site, VodItem};
 use crate::services::SourceCrawler;
 use crate::utils::error::{MoovieError, Result};
 use futures::future::join_all;
@@ -51,7 +51,7 @@ impl SearchService {
 
         let sites = self.sites.lock().unwrap().clone();
         let enabled_sites: Vec<_> = sites.iter().filter(|s| s.enabled).collect();
-        
+
         if enabled_sites.is_empty() {
             return Ok(SearchResult {
                 items: Vec::new(),
@@ -111,13 +111,11 @@ impl SearchService {
         };
 
         let mut items = items;
-        items.sort_by(|a, b| {
-            match (a.avg_speed_ms, b.avg_speed_ms) {
-                (None, None) => std::cmp::Ordering::Equal,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (Some(a_ms), Some(b_ms)) => a_ms.cmp(&b_ms),
-            }
+        items.sort_by(|a, b| match (a.avg_speed_ms, b.avg_speed_ms) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(a_ms), Some(b_ms)) => a_ms.cmp(&b_ms),
         });
 
         Ok(SearchResult {
@@ -130,10 +128,14 @@ impl SearchService {
         info!("获取详情: {} - {}", source_key, vod_id);
 
         let sites = self.sites.lock().unwrap().clone();
-        let site = sites.iter().find(|s| s.key == source_key && s.enabled)
+        let site = sites
+            .iter()
+            .find(|s| s.key == source_key && s.enabled)
             .ok_or_else(|| MoovieError::NotFound)?;
 
-        self.crawler.get_detail(&site.base_url, vod_id, source_key).await
+        self.crawler
+            .get_detail(&site.base_url, vod_id, source_key)
+            .await
     }
 
     fn filter_copyright_content(&self, items: Vec<VodItem>) -> (Vec<VodItem>, usize) {
@@ -142,16 +144,23 @@ impl SearchService {
         }
 
         let total_count = items.len();
-        let filtered: Vec<_> = items.into_iter()
+        let filtered: Vec<_> = items
+            .into_iter()
             .filter(|item| {
-                !self.copyright_keywords.iter()
+                !self
+                    .copyright_keywords
+                    .iter()
                     .any(|kw| item.vod_name.to_lowercase().contains(&kw.to_lowercase()))
             })
             .collect();
 
         let filtered_count = total_count - filtered.len();
         if filtered_count > 0 {
-            info!("版权过滤: 原 {} 条，过滤后 {} 条", total_count, filtered.len());
+            info!(
+                "版权过滤: 原 {} 条，过滤后 {} 条",
+                total_count,
+                filtered.len()
+            );
         }
 
         (filtered, filtered_count)

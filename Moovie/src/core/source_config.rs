@@ -1,8 +1,8 @@
+use crate::models::Site;
+use crate::utils::error::{MoovieError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use crate::models::Site;
-use crate::utils::error::{Result, MoovieError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceConfig {
@@ -33,7 +33,7 @@ impl SourceConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| MoovieError::ConfigError(format!("无法读取配置文件: {}", e)))?;
-        
+
         serde_json::from_str(&content)
             .map_err(|e| MoovieError::ConfigError(format!("解析配置文件失败: {}", e)))
     }
@@ -69,11 +69,11 @@ mod tests {
             }
         }
         "#;
-        
+
         let config: SourceConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.cache_time, Some(7200));
         assert!(config.api_site.contains_key("test.com"));
-        
+
         let sites = config.to_sites();
         assert_eq!(sites.len(), 1);
         assert_eq!(sites[0].key, "test.com");

@@ -5,9 +5,9 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::utils::error::{MoovieError, Result};
 use super::super::models::{LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
 use super::LiveProvider;
+use crate::utils::error::{MoovieError, Result};
 
 pub struct HuyaProvider {
     client: reqwest::Client,
@@ -98,7 +98,9 @@ impl HuyaProvider {
             .unwrap_or_else(|| "tars_mobile".to_string());
         let fs = params.get("fs").cloned().unwrap_or_default();
         if fm_raw.trim().is_empty() || fs.trim().is_empty() {
-            return Err(MoovieError::DetailError("虎牙 anticode 缺少 fm/fs".to_string()));
+            return Err(MoovieError::DetailError(
+                "虎牙 anticode 缺少 fm/fs".to_string(),
+            ));
         }
 
         // Some decoders turn '+' into space; restore it for base64.
@@ -109,7 +111,9 @@ impl HuyaProvider {
         let fm_text = String::from_utf8_lossy(&fm_bytes);
         let ws_secret_prefix = fm_text.split('_').next().unwrap_or("").to_string();
         if ws_secret_prefix.trim().is_empty() {
-            return Err(MoovieError::DetailError("虎牙 wsSecretPrefix 为空".to_string()));
+            return Err(MoovieError::DetailError(
+                "虎牙 wsSecretPrefix 为空".to_string(),
+            ));
         }
 
         use rand::Rng;
@@ -231,14 +235,22 @@ impl HuyaProvider {
             .unwrap_or_default();
 
         for item in lines {
-            let stream_name = item["sStreamName"].as_str().unwrap_or("").trim().to_string();
+            let stream_name = item["sStreamName"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if stream_name.is_empty() {
                 continue;
             }
 
             // Prefer HLS if present
             let hls_url = item["sHlsUrl"].as_str().unwrap_or("").trim().to_string();
-            let hls_code = item["sHlsAntiCode"].as_str().unwrap_or("").trim().to_string();
+            let hls_code = item["sHlsAntiCode"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !hls_url.is_empty() && !hls_code.is_empty() {
                 out.push(HuyaStreamLine {
                     base_url: hls_url,
@@ -249,7 +261,11 @@ impl HuyaProvider {
             }
 
             let flv_url = item["sFlvUrl"].as_str().unwrap_or("").trim().to_string();
-            let flv_code = item["sFlvAntiCode"].as_str().unwrap_or("").trim().to_string();
+            let flv_code = item["sFlvAntiCode"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !flv_url.is_empty() && !flv_code.is_empty() {
                 out.push(HuyaStreamLine {
                     base_url: flv_url,
@@ -295,7 +311,10 @@ impl LiveProvider for HuyaProvider {
             .map_err(|e| MoovieError::SourceSearchError(format!("虎牙推荐解析失败: {}", e)))?;
 
         let mut items = Vec::new();
-        let list = json["data"]["datas"].as_array().cloned().unwrap_or_default();
+        let list = json["data"]["datas"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         for item in list {
             let mut cover = item["screenshot"].as_str().unwrap_or("").to_string();
             if !cover.contains('?') {
@@ -396,7 +415,11 @@ impl LiveProvider for HuyaProvider {
                     user_name: item["game_nick"].as_str().unwrap_or("").to_string(),
                     online: item["game_total_count"]
                         .as_i64()
-                        .or_else(|| item["game_total_count"].as_str().and_then(|s| s.parse().ok()))
+                        .or_else(|| {
+                            item["game_total_count"]
+                                .as_str()
+                                .and_then(|s| s.parse().ok())
+                        })
                         .unwrap_or(0),
                 });
             }
@@ -431,8 +454,14 @@ impl LiveProvider for HuyaProvider {
 
         let user_name = t_profile["sNick"].as_str().unwrap_or("").to_string();
         let user_avatar = t_profile["sAvatar180"].as_str().unwrap_or("").to_string();
-        let notice = obj["welcomeText"].as_str().map(|s| s.to_string()).filter(|s| !s.trim().is_empty());
-        let introduction = t_live["sIntroduction"].as_str().map(|s| s.to_string()).filter(|s| !s.trim().is_empty());
+        let notice = obj["welcomeText"]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.trim().is_empty());
+        let introduction = t_live["sIntroduction"]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.trim().is_empty());
         let status = obj["roomInfo"]["eLiveStatus"].as_i64().unwrap_or(0) == 2;
 
         Ok(LiveRoomDetail {
@@ -471,7 +500,11 @@ impl LiveProvider for HuyaProvider {
                 .unwrap_or(0);
             qualities.push(LivePlayQuality {
                 id: bit_rate.to_string(),
-                name: if name.trim().is_empty() { "原画".to_string() } else { name },
+                name: if name.trim().is_empty() {
+                    "原画".to_string()
+                } else {
+                    name
+                },
                 sort: bit_rate as i32,
             });
         }

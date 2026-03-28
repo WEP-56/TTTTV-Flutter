@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::{delete, get, post},
-    Json, Router,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -72,4 +72,3 @@ pub async fn clear_live_history(State(state): State<AppState>) -> ApiResult<()> 
     storage.clear_live_history()?;
     Ok(Json(ApiResponse::success(())))
 }
-

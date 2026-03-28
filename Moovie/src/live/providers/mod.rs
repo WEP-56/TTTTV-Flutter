@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 
-use crate::utils::error::Result;
 use super::models::{LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
+use crate::utils::error::Result;
 
 pub mod bilibili;
-pub mod douyu;
-pub mod huya;
 pub mod douyin;
 mod douyin_abogus_native;
+pub mod douyu;
+pub mod huya;
 
 #[async_trait]
 pub trait LiveProvider: Send + Sync {

@@ -4,10 +4,10 @@ use url::Url;
 
 use std::collections::HashMap;
 
-use crate::utils::error::{MoovieError, Result};
 use super::super::models::{LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
 use super::LiveProvider;
 use super::douyin_abogus_native;
+use crate::utils::error::{MoovieError, Result};
 
 pub struct DouyinProvider {
     client: reqwest::Client,
@@ -47,8 +47,8 @@ impl DouyinProvider {
     }
 
     fn generate_ms_token(len: usize) -> String {
-        use rand::distributions::Alphanumeric;
         use rand::Rng;
+        use rand::distributions::Alphanumeric;
         rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(len)
@@ -100,10 +100,7 @@ impl DouyinProvider {
         let signed = Self::with_abogus(url.as_str(), Self::default_user_agent())?;
 
         let mut headers = self.base_headers();
-        headers.insert(
-            "referer",
-            format!("https://live.douyin.com/{}", web_rid),
-        );
+        headers.insert("referer", format!("https://live.douyin.com/{}", web_rid));
 
         let mut req = self.client.get(signed);
         for (k, v) in headers {
@@ -123,7 +120,9 @@ impl DouyinProvider {
         room_data.get("stream_url").cloned().unwrap_or(Value::Null)
     }
 
-    fn extract_pull_urls_from_stream(stream_url: &Value) -> Vec<(String, String, i32, Vec<String>)> {
+    fn extract_pull_urls_from_stream(
+        stream_url: &Value,
+    ) -> Vec<(String, String, i32, Vec<String>)> {
         // returns vec of (id, name, sort, urls)
         let mut out = Vec::new();
         let live_core = &stream_url["live_core_sdk_data"];
@@ -149,10 +148,16 @@ impl DouyinProvider {
                     };
 
                     let mut urls = Vec::new();
-                    if let Some(flv) = data[&sdk_key]["main"]["flv"].as_str().filter(|s| !s.is_empty()) {
+                    if let Some(flv) = data[&sdk_key]["main"]["flv"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                    {
                         urls.push(flv.to_string());
                     }
-                    if let Some(hls) = data[&sdk_key]["main"]["hls"].as_str().filter(|s| !s.is_empty()) {
+                    if let Some(hls) = data[&sdk_key]["main"]["hls"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                    {
                         urls.push(hls.to_string());
                     }
                     if !urls.is_empty() {
@@ -164,11 +169,19 @@ impl DouyinProvider {
             // fallback to flv_pull_url / hls_pull_url_map
             let flv_list: Vec<String> = stream_url["flv_pull_url"]
                 .as_object()
-                .map(|m| m.values().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|m| {
+                    m.values()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
             let hls_list: Vec<String> = stream_url["hls_pull_url_map"]
                 .as_object()
-                .map(|m| m.values().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|m| {
+                    m.values()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             for q in qualities {
@@ -396,7 +409,9 @@ impl LiveProvider for DouyinProvider {
     async fn room_detail(&self, room_id: &str) -> Result<LiveRoomDetail> {
         let web_rid = room_id.trim();
         if web_rid.is_empty() {
-            return Err(MoovieError::InvalidParameter("room_id 不能为空".to_string()));
+            return Err(MoovieError::InvalidParameter(
+                "room_id 不能为空".to_string(),
+            ));
         }
 
         let data = self.get_room_data_by_api(web_rid).await?;

@@ -1,20 +1,25 @@
 use axum::{
+    Json, Router,
     body::Body,
-    extract::{Path, Query, State},
     extract::ws::WebSocketUpgrade,
-    http::{self, header, HeaderMap, Response},
+    extract::{Path, Query, State},
+    http::{self, HeaderMap, Response, header},
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
 use futures::StreamExt;
 use serde::Deserialize;
 use url::Url;
 
 use crate::core::AppState;
-use crate::live::models::{LivePlatformInfo, LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
-use crate::live::providers::{LiveProvider, bilibili::BiliBiliProvider, douyu::DouyuProvider, huya::HuyaProvider, douyin::DouyinProvider};
 use crate::live::danmaku;
+use crate::live::models::{
+    LivePlatformInfo, LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem,
+};
+use crate::live::providers::{
+    LiveProvider, bilibili::BiliBiliProvider, douyin::DouyinProvider, douyu::DouyuProvider,
+    huya::HuyaProvider,
+};
 use crate::utils::error::MoovieError;
 use crate::utils::response::{ApiResponse, ApiResult};
 
@@ -153,13 +158,9 @@ pub async fn danmaku_ws(
 
     ws.on_upgrade(move |socket| async move {
         if platform == "bilibili" {
-            let _ = danmaku::bilibili::bridge(
-                state.client.clone(),
-                bili_cookie,
-                query.room_id,
-                socket,
-            )
-            .await;
+            let _ =
+                danmaku::bilibili::bridge(state.client.clone(), bili_cookie, query.room_id, socket)
+                    .await;
         } else if platform == "douyu" {
             let _ = danmaku::douyu::bridge(query.room_id, socket).await;
         } else if platform == "huya" {
@@ -188,7 +189,10 @@ fn build_provider(platform: &str, state: &AppState) -> Result<Box<dyn LiveProvid
                 .unwrap()
                 .get_live_cookie("bilibili")
                 .unwrap_or_default();
-            Ok(Box::new(BiliBiliProvider::new(state.client.clone(), cookie)))
+            Ok(Box::new(BiliBiliProvider::new(
+                state.client.clone(),
+                cookie,
+            )))
         }
         "douyu" => Ok(Box::new(DouyuProvider::new(state.client.clone()))),
         "huya" => Ok(Box::new(HuyaProvider::new(state.client.clone()))),
@@ -325,7 +329,10 @@ fn is_m3u8(url: &Url, headers: &HeaderMap) -> bool {
         return true;
     }
 
-    if let Some(ct) = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    if let Some(ct) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         let ct = ct.to_ascii_lowercase();
         if ct.contains("application/vnd.apple.mpegurl") || ct.contains("application/x-mpegurl") {
             return true;

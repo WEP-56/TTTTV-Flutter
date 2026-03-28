@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::{delete, get, post},
-    Json, Router,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -85,7 +85,9 @@ pub async fn check_live_favorite(
 ) -> ApiResult<CheckLiveFavoriteResponse> {
     let storage = state.storage.lock().unwrap();
     let is_favorited = storage.is_live_favorited(&query.platform, &query.room_id);
-    Ok(Json(ApiResponse::success(CheckLiveFavoriteResponse { is_favorited })))
+    Ok(Json(ApiResponse::success(CheckLiveFavoriteResponse {
+        is_favorited,
+    })))
 }
 
 pub async fn clear_live_favorites(State(state): State<AppState>) -> ApiResult<()> {
@@ -93,4 +95,3 @@ pub async fn clear_live_favorites(State(state): State<AppState>) -> ApiResult<()
     storage.clear_live_favorites()?;
     Ok(Json(ApiResponse::success(())))
 }
-

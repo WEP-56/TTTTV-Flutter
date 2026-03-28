@@ -1,9 +1,9 @@
-use axum::{
-    extract::State,
-    routing::{get, post, delete},
-    Json, Router,
-};
 use axum::extract::Query;
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{delete, get, post},
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -49,9 +49,7 @@ pub fn router() -> Router<AppState> {
         .route("/clear", delete(clear_favorites))
 }
 
-pub async fn get_favorites(
-    State(state): State<AppState>,
-) -> ApiResult<Vec<FavoriteItem>> {
+pub async fn get_favorites(State(state): State<AppState>) -> ApiResult<Vec<FavoriteItem>> {
     let storage = state.storage.lock().unwrap();
     let favorites = storage.get_favorites().to_vec();
     Ok(Json(ApiResponse::success(favorites)))
@@ -62,7 +60,7 @@ pub async fn add_favorite(
     Json(request): Json<AddFavoriteRequest>,
 ) -> ApiResult<()> {
     let mut storage = state.storage.lock().unwrap();
-    
+
     let item = FavoriteItem {
         vod_id: request.vod_id,
         source_key: request.source_key,
@@ -74,9 +72,9 @@ pub async fn add_favorite(
         vod_content: request.vod_content,
         created_time: Utc::now().timestamp(),
     };
-    
+
     storage.add_favorite(item)?;
-    
+
     Ok(Json(ApiResponse::success(())))
 }
 
@@ -95,12 +93,12 @@ pub async fn check_favorite(
 ) -> ApiResult<CheckFavoriteResponse> {
     let storage = state.storage.lock().unwrap();
     let is_favorited = storage.is_favorited(&query.vod_id, &query.source_key);
-    Ok(Json(ApiResponse::success(CheckFavoriteResponse { is_favorited })))
+    Ok(Json(ApiResponse::success(CheckFavoriteResponse {
+        is_favorited,
+    })))
 }
 
-pub async fn clear_favorites(
-    State(state): State<AppState>,
-) -> ApiResult<()> {
+pub async fn clear_favorites(State(state): State<AppState>) -> ApiResult<()> {
     let mut storage = state.storage.lock().unwrap();
     storage.clear_favorites()?;
     Ok(Json(ApiResponse::success(())))

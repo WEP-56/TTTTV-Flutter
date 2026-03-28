@@ -1,7 +1,7 @@
-pub mod vod_item;
-pub mod site;
 pub mod history;
+pub mod site;
+pub mod vod_item;
 
-pub use vod_item::VodItem;
-pub use site::Site;
 pub use history::WatchHistory;
+pub use site::Site;
+pub use vod_item::VodItem;

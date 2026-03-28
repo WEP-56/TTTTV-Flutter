@@ -3,14 +3,16 @@ use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value};
 use std::time::Duration;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as WsMessage};
+use tokio_tungstenite::tungstenite::{Message as WsMessage, client::IntoClientRequest};
 
 use crate::live::models::{LiveMessage, LiveMessageColor, LiveMessageType};
 use crate::utils::error::MoovieError;
 
 pub async fn bridge(room_id: String, socket: WebSocket) -> Result<(), MoovieError> {
     if room_id.trim().is_empty() {
-        return Err(MoovieError::InvalidParameter("room_id 不能为空".to_string()));
+        return Err(MoovieError::InvalidParameter(
+            "room_id 不能为空".to_string(),
+        ));
     }
 
     let ws_url = "wss://danmuproxy.douyu.com:8506";
@@ -151,11 +153,23 @@ fn parse_douyu_message(text: &str) -> Option<LiveMessage> {
         return None;
     }
 
-    let user_name = obj.get("nn").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let message = obj.get("txt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let user_name = obj
+        .get("nn")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let message = obj
+        .get("txt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let col = obj
         .get("col")
-        .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| v.as_i64())
+        })
         .unwrap_or(0);
 
     Some(LiveMessage {
@@ -206,11 +220,35 @@ fn unescape_stt(input: &str) -> String {
 fn douyu_color(t: i64) -> LiveMessageColor {
     match t {
         1 => LiveMessageColor { r: 255, g: 0, b: 0 },
-        2 => LiveMessageColor { r: 30, g: 135, b: 240 },
-        3 => LiveMessageColor { r: 122, g: 200, b: 75 },
-        4 => LiveMessageColor { r: 255, g: 127, b: 0 },
-        5 => LiveMessageColor { r: 155, g: 57, b: 244 },
-        6 => LiveMessageColor { r: 255, g: 105, b: 180 },
-        _ => LiveMessageColor { r: 255, g: 255, b: 255 },
+        2 => LiveMessageColor {
+            r: 30,
+            g: 135,
+            b: 240,
+        },
+        3 => LiveMessageColor {
+            r: 122,
+            g: 200,
+            b: 75,
+        },
+        4 => LiveMessageColor {
+            r: 255,
+            g: 127,
+            b: 0,
+        },
+        5 => LiveMessageColor {
+            r: 155,
+            g: 57,
+            b: 244,
+        },
+        6 => LiveMessageColor {
+            r: 255,
+            g: 105,
+            b: 180,
+        },
+        _ => LiveMessageColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        },
     }
 }

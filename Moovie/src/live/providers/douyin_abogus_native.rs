@@ -38,11 +38,7 @@ fn left_rotate(x: u32, n: u32) -> u32 {
 }
 
 fn get_t_j(j: usize) -> u32 {
-    if j < 16 {
-        0x79CC4519
-    } else {
-        0x7A879D8A
-    }
+    if j < 16 { 0x79CC4519 } else { 0x7A879D8A }
 }
 
 fn ff_j(j: usize, x: u32, y: u32, z: u32) -> u32 {
@@ -142,7 +138,9 @@ impl SM3 {
 
         for j in 0..64 {
             let ss1 = left_rotate(
-                (left_rotate(a, 12).wrapping_add(e).wrapping_add(left_rotate(get_t_j(j), j as u32)))
+                (left_rotate(a, 12)
+                    .wrapping_add(e)
+                    .wrapping_add(left_rotate(get_t_j(j), j as u32)))
                     & 0xFFFFFFFF,
                 7,
             );
@@ -286,13 +284,18 @@ fn generate_rc4_bb_str(
         .unwrap()
         .as_millis() as i64;
 
-    let url_list = sm3_sum(&sm3_sum(format!("{}{}", url_search_params, suffix).as_bytes()));
+    let url_list = sm3_sum(&sm3_sum(
+        format!("{}{}", url_search_params, suffix).as_bytes(),
+    ));
     let cus_once = sm3_sum(suffix.as_bytes());
     let cus = sm3_sum(&cus_once);
     let ua_key = [0u8, 1u8, 14u8];
     let ua = sm3_sum(
-        result_encrypt(&rc4_encrypt(user_agent, &String::from_utf8_lossy(&ua_key)), "s3")
-            .as_bytes(),
+        result_encrypt(
+            &rc4_encrypt(user_agent, &String::from_utf8_lossy(&ua_key)),
+            "s3",
+        )
+        .as_bytes(),
     );
 
     let end_time = start_time + 100;
@@ -424,10 +427,10 @@ fn generate_rc4_bb_str(
     b[72] = checksum;
 
     let mut bb: Vec<i64> = vec![
-        b[18], b[20], b[52], b[26], b[30], b[34], b[58], b[38], b[40], b[53], b[42], b[21],
-        b[27], b[54], b[55], b[31], b[35], b[57], b[39], b[41], b[43], b[22], b[28], b[32],
-        b[60], b[36], b[23], b[29], b[33], b[37], b[44], b[45], b[59], b[46], b[47], b[48],
-        b[49], b[50], b[24], b[25], b[65], b[66], b[70], b[71],
+        b[18], b[20], b[52], b[26], b[30], b[34], b[58], b[38], b[40], b[53], b[42], b[21], b[27],
+        b[54], b[55], b[31], b[35], b[57], b[39], b[41], b[43], b[22], b[28], b[32], b[60], b[36],
+        b[23], b[29], b[33], b[37], b[44], b[45], b[59], b[46], b[47], b[48], b[49], b[50], b[24],
+        b[25], b[65], b[66], b[70], b[71],
     ];
     bb.extend(window_env_list);
     bb.push(checksum);

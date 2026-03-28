@@ -1,12 +1,12 @@
-use axum::{
-    extract::{State, Query},
-    routing::{get, post, delete},
-    Json, Router,
-};
 use crate::core::{AppState, SiteWithStatus};
-use crate::utils::response::{ApiResponse, ApiResult};
-use serde::{Deserialize, Serialize};
 use crate::utils::error::MoovieError;
+use crate::utils::response::{ApiResponse, ApiResult};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    routing::{delete, get, post},
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct ToggleSiteQuery {
@@ -72,20 +72,26 @@ pub struct AddSourcesBatchFailure {
     pub error: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisableBadSitesResult {
+    pub disabled: Vec<String>,
+    pub already_disabled: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_sites))
         .route("/toggle", get(toggle_site).post(toggle_site))
-        .route("/check", get(check_sites))
+        .route("/check", get(check_sites).post(check_sites))
+        .route("/disable_bad", post(disable_bad_sites))
         .route("/add", post(add_source))
         .route("/add_batch", post(add_sources_batch))
         .route("/delete", delete(delete_source))
         .route("/remote", get(get_remote_sources))
 }
 
-pub async fn get_sites(
-    State(state): State<AppState>,
-) -> ApiResult<Vec<SiteWithStatus>> {
+pub async fn get_sites(State(state): State<AppState>) -> ApiResult<Vec<SiteWithStatus>> {
     let sites = state.get_all_sites();
     Ok(Json(ApiResponse::success(sites)))
 }
@@ -102,13 +108,13 @@ pub async fn check_sites(
     State(state): State<AppState>,
     Query(query): Query<CheckSiteQuery>,
 ) -> ApiResult<Vec<SiteWithStatus>> {
-    let mut sites = state.get_all_sites();
-    
-    if let Some(key) = query.key {
-        sites.retain(|s| s.key == key);
-    }
-
+    let sites = state.check_site_health(query.key.as_deref()).await?;
     Ok(Json(ApiResponse::success(sites)))
+}
+
+pub async fn disable_bad_sites(State(state): State<AppState>) -> ApiResult<DisableBadSitesResult> {
+    let result = state.disable_bad_sites()?;
+    Ok(Json(ApiResponse::success(result)))
 }
 
 pub async fn add_source(
@@ -151,7 +157,10 @@ pub async fn get_remote_sources(
     Query(query): Query<RemoteSourcesQuery>,
 ) -> ApiResult<RemoteSourcesResponse> {
     let (url, sources) = fetch_remote_sources(&state, query.url).await?;
-    Ok(Json(ApiResponse::success(RemoteSourcesResponse { url, sources })))
+    Ok(Json(ApiResponse::success(RemoteSourcesResponse {
+        url,
+        sources,
+    })))
 }
 
 async fn fetch_remote_sources(

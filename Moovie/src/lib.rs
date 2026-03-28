@@ -6,10 +6,7 @@ pub mod proxy;
 pub mod services;
 pub mod utils;
 
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{Router, routing::get};
 use core::{AppState, LocalStorage, SourceConfig};
 use directories::ProjectDirs;
 use std::net::{Ipv4Addr, SocketAddr};

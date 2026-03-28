@@ -1,4 +1,4 @@
-use actix_web::{dev::ServerHandle, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, dev::ServerHandle, web};
 use futures::TryStreamExt;
 use reqwest::Client;
 use serde::Deserialize;
@@ -120,7 +120,10 @@ async fn flv_proxy_handler(
         return HttpResponse::NotFound().body("Stream URL is not set or empty.");
     }
 
-    println!("[proxy.rs handler] Incoming FLV proxy request -> {} (platform: {})", url, platform);
+    println!(
+        "[proxy.rs handler] Incoming FLV proxy request -> {} (platform: {})",
+        url, platform
+    );
 
     let mut req = client
         .get(&url)
@@ -275,9 +278,7 @@ pub async fn start_proxy(
     Ok(proxy_url)
 }
 
-pub async fn start_static_proxy_server(
-    stream_url_store: StreamUrlStore,
-) -> Result<String, String> {
+pub async fn start_static_proxy_server(stream_url_store: StreamUrlStore) -> Result<String, String> {
     let port: u16 = 34721;
 
     if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -338,14 +339,18 @@ pub async fn start_static_proxy_server(
     Ok(format!("http://127.0.0.1:{}", port))
 }
 
-pub async fn stop_proxy(server_handle_state: Arc<StdMutex<Option<ServerHandle>>>) -> Result<(), String> {
+pub async fn stop_proxy(
+    server_handle_state: Arc<StdMutex<Option<ServerHandle>>>,
+) -> Result<(), String> {
     let handle_to_stop = { server_handle_state.lock().unwrap().take() };
 
     if let Some(handle) = handle_to_stop {
         handle.stop(false).await;
         println!("[proxy.rs] stop_proxy: Initiated non-graceful shutdown.");
     } else {
-        println!("[proxy.rs] stop_proxy command: No proxy server was running or handle already taken.");
+        println!(
+            "[proxy.rs] stop_proxy command: No proxy server was running or handle already taken."
+        );
     }
     Ok(())
 }

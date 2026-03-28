@@ -16,12 +16,7 @@ pub trait SourceCrawler: Send + Sync {
         restricted_categories: &[String],
     ) -> Result<Vec<VodItem>>;
 
-    async fn get_detail(
-        &self,
-        base_url: &str,
-        vod_id: &str,
-        source_key: &str,
-    ) -> Result<VodItem>;
+    async fn get_detail(&self, base_url: &str, vod_id: &str, source_key: &str) -> Result<VodItem>;
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +122,7 @@ impl SourceCrawler for DefaultSourceCrawler {
         }
 
         let api_resp: VodApiResponse = response.json().await?;
-        
+
         if let Some(code) = &api_resp.code {
             let code_num = match code {
                 serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
@@ -138,7 +133,10 @@ impl SourceCrawler for DefaultSourceCrawler {
                 if let Some(msg) = &api_resp.msg {
                     return Err(MoovieError::SourceSearchError(format!("API错误: {}", msg)));
                 }
-                return Err(MoovieError::SourceSearchError(format!("API错误代码: {}", code_num)));
+                return Err(MoovieError::SourceSearchError(format!(
+                    "API错误代码: {}",
+                    code_num
+                )));
             }
         }
 
@@ -162,12 +160,7 @@ impl SourceCrawler for DefaultSourceCrawler {
         Ok(items)
     }
 
-    async fn get_detail(
-        &self,
-        base_url: &str,
-        vod_id: &str,
-        source_key: &str,
-    ) -> Result<VodItem> {
+    async fn get_detail(&self, base_url: &str, vod_id: &str, source_key: &str) -> Result<VodItem> {
         let mut url = if base_url.ends_with('/') {
             base_url.to_string()
         } else {
@@ -186,7 +179,7 @@ impl SourceCrawler for DefaultSourceCrawler {
         }
 
         let api_resp: VodApiResponse = response.json().await?;
-        
+
         if let Some(code) = &api_resp.code {
             let code_num = match code {
                 serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
@@ -197,7 +190,10 @@ impl SourceCrawler for DefaultSourceCrawler {
                 if let Some(msg) = &api_resp.msg {
                     return Err(MoovieError::DetailError(format!("API错误: {}", msg)));
                 }
-                return Err(MoovieError::DetailError(format!("API错误代码: {}", code_num)));
+                return Err(MoovieError::DetailError(format!(
+                    "API错误代码: {}",
+                    code_num
+                )));
             }
         }
 

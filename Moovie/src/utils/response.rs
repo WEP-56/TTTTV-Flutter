@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
+use super::error::MoovieError;
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use super::error::MoovieError;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -52,10 +52,9 @@ impl IntoResponse for MoovieError {
                 StatusCode::NOT_FOUND,
                 ApiResponse::<()>::error("资源未找到"),
             ),
-            MoovieError::InvalidParameter(msg) => (
-                StatusCode::BAD_REQUEST,
-                ApiResponse::<()>::error(&msg),
-            ),
+            MoovieError::InvalidParameter(msg) => {
+                (StatusCode::BAD_REQUEST, ApiResponse::<()>::error(&msg))
+            }
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiResponse::<()>::error(&self.to_string()),

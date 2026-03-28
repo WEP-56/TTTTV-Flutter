@@ -1,9 +1,9 @@
-use axum::{
-    extract::State,
-    routing::{get, post, delete},
-    Json, Router,
-};
 use axum::extract::Query;
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{delete, get, post},
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -35,9 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/clear", delete(clear_watch_history))
 }
 
-pub async fn get_watch_history(
-    State(state): State<AppState>,
-) -> ApiResult<Vec<WatchHistoryItem>> {
+pub async fn get_watch_history(State(state): State<AppState>) -> ApiResult<Vec<WatchHistoryItem>> {
     let storage = state.storage.lock().unwrap();
     let history = storage.get_watch_history().to_vec();
     Ok(Json(ApiResponse::success(history)))
@@ -48,7 +46,7 @@ pub async fn add_watch_history(
     Json(request): Json<AddWatchHistoryRequest>,
 ) -> ApiResult<()> {
     let mut storage = state.storage.lock().unwrap();
-    
+
     let item = WatchHistoryItem {
         vod_id: request.vod_id,
         source_key: request.source_key,
@@ -58,9 +56,9 @@ pub async fn add_watch_history(
         progress: request.progress,
         episode: request.episode,
     };
-    
+
     storage.add_watch_history(item)?;
-    
+
     Ok(Json(ApiResponse::success(())))
 }
 
@@ -73,9 +71,7 @@ pub async fn delete_watch_history(
     Ok(Json(ApiResponse::success(())))
 }
 
-pub async fn clear_watch_history(
-    State(state): State<AppState>,
-) -> ApiResult<()> {
+pub async fn clear_watch_history(State(state): State<AppState>) -> ApiResult<()> {
     let mut storage = state.storage.lock().unwrap();
     storage.clear_watch_history()?;
     Ok(Json(ApiResponse::success(())))

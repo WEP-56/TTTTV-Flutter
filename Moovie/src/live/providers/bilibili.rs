@@ -7,9 +7,9 @@ use url::Url;
 
 use std::collections::HashMap;
 
-use crate::utils::error::{MoovieError, Result};
 use super::super::models::{LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
 use super::LiveProvider;
+use crate::utils::error::{MoovieError, Result};
 
 static WBI_CACHE: Lazy<Mutex<WbiCache>> = Lazy::new(|| Mutex::new(WbiCache::default()));
 
@@ -39,10 +39,7 @@ pub(crate) struct BiliBiliDanmakuInfo {
 
 impl BiliBiliProvider {
     pub fn new(client: reqwest::Client, cookie: String) -> Self {
-        Self {
-            client,
-            cookie,
-        }
+        Self { client, cookie }
     }
 
     fn default_user_agent() -> &'static str {
@@ -86,8 +83,14 @@ impl BiliBiliProvider {
         };
 
         Ok(HashMap::from([
-            ("user-agent".to_string(), Self::default_user_agent().to_string()),
-            ("referer".to_string(), "https://live.bilibili.com/".to_string()),
+            (
+                "user-agent".to_string(),
+                Self::default_user_agent().to_string(),
+            ),
+            (
+                "referer".to_string(),
+                "https://live.bilibili.com/".to_string(),
+            ),
             ("cookie".to_string(), cookie),
         ]))
     }
@@ -182,7 +185,11 @@ impl BiliBiliProvider {
         Ok(params)
     }
 
-    pub(crate) async fn get_json(&self, url: &str, params: HashMap<String, String>) -> Result<Value> {
+    pub(crate) async fn get_json(
+        &self,
+        url: &str,
+        params: HashMap<String, String>,
+    ) -> Result<Value> {
         let headers = self.header_map().await?;
 
         let resp = self
@@ -215,7 +222,10 @@ impl BiliBiliProvider {
         let danmu_url = format!("{}?id={}", danmu_base, real_room_id);
         let danmu_params = self.wbi_sign_params(&danmu_url).await?;
         let danmu_json = self.get_json(danmu_base, danmu_params).await?;
-        let token = danmu_json["data"]["token"].as_str().unwrap_or("").to_string();
+        let token = danmu_json["data"]["token"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let server_host = danmu_json["data"]["host_list"]
             .as_array()
             .and_then(|arr| arr.first())
@@ -321,7 +331,9 @@ impl LiveProvider for BiliBiliProvider {
         for item in rooms {
             let mut title = item["title"].as_str().unwrap_or("").to_string();
             // remove <em>...</em>
-            title = title.replace("<em class=\"keyword\">", "").replace("</em>", "");
+            title = title
+                .replace("<em class=\"keyword\">", "")
+                .replace("</em>", "");
 
             let cover = item["cover"].as_str().unwrap_or("");
             let cover = if cover.starts_with("//") {
@@ -349,8 +361,7 @@ impl LiveProvider for BiliBiliProvider {
     }
 
     async fn room_detail(&self, room_id: &str) -> Result<LiveRoomDetail> {
-        let room_info_base =
-            "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom";
+        let room_info_base = "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom";
         let room_info_url = format!("{}?room_id={}", room_info_base, room_id);
         let room_info_params = self.wbi_sign_params(&room_info_url).await?;
         let room_info_json = self.get_json(room_info_base, room_info_params).await?;
@@ -361,13 +372,17 @@ impl LiveProvider for BiliBiliProvider {
             .unwrap_or_else(|| room_id.parse().unwrap_or(0))
             .to_string();
 
-        let title = data["room_info"]["title"].as_str().unwrap_or("").to_string();
-        let cover = data["room_info"]["cover"].as_str().unwrap_or("").to_string();
+        let title = data["room_info"]["title"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let cover = data["room_info"]["cover"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let online = data["room_info"]["online"].as_i64().unwrap_or(0);
         let live_status = data["room_info"]["live_status"].as_i64().unwrap_or(0) == 1;
-        let live_start_time = data["room_info"]["live_start_time"]
-            .as_i64()
-            .unwrap_or(0);
+        let live_start_time = data["room_info"]["live_start_time"].as_i64().unwrap_or(0);
         let show_time = if live_start_time > 0 {
             Some(live_start_time.to_string())
         } else {
@@ -445,7 +460,10 @@ impl LiveProvider for BiliBiliProvider {
                 }
                 qualities.push(LivePlayQuality {
                     id: qn.to_string(),
-                    name: qn_desc.get(&qn).cloned().unwrap_or_else(|| "未知清晰度".to_string()),
+                    name: qn_desc
+                        .get(&qn)
+                        .cloned()
+                        .unwrap_or_else(|| "未知清晰度".to_string()),
                     sort: qn as i32,
                 });
             }
@@ -498,14 +516,22 @@ impl LiveProvider for BiliBiliProvider {
         urls.sort_by(|a, b| {
             let a_is_m3u8 = a.contains(".m3u8");
             let b_is_m3u8 = b.contains(".m3u8");
-            b_is_m3u8.cmp(&a_is_m3u8).then_with(|| a.contains("mcdn").cmp(&b.contains("mcdn")))
+            b_is_m3u8
+                .cmp(&a_is_m3u8)
+                .then_with(|| a.contains("mcdn").cmp(&b.contains("mcdn")))
         });
 
         Ok(LivePlayUrl {
             urls,
             headers: Some(HashMap::from([
-                ("referer".to_string(), "https://live.bilibili.com/".to_string()),
-                ("user-agent".to_string(), Self::default_user_agent().to_string()),
+                (
+                    "referer".to_string(),
+                    "https://live.bilibili.com/".to_string(),
+                ),
+                (
+                    "user-agent".to_string(),
+                    Self::default_user_agent().to_string(),
+                ),
             ])),
             url_type: Some("auto".to_string()),
             expires_at: None,
@@ -522,10 +548,9 @@ fn filter_wbi_value(value: &str) -> String {
 
 fn get_mixin_key(origin: &str) -> String {
     const TAB: [usize; 64] = [
-        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43,
-        5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16,
-        24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59,
-        6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
+        29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+        22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
     ];
 
     let bytes = origin.as_bytes();

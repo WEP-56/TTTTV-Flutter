@@ -1,10 +1,10 @@
-use axum::{
-    extract::{State, Query},
-    Json,
-};
 use crate::core::AppState;
 use crate::models::VodItem;
 use crate::utils::response::{ApiResponse, ApiResult};
+use axum::{
+    Json,
+    extract::{Query, State},
+};
 use serde::Deserialize;
 use tracing::info;
 
@@ -26,10 +26,10 @@ pub async fn search(
 ) -> ApiResult<SearchApiResult> {
     info!("搜索API调用: {}", query.kw);
 
-    let result = state.search_service.search(
-        &query.kw,
-        query.bypass.unwrap_or(false),
-    ).await?;
+    let result = state
+        .search_service
+        .search(&query.kw, query.bypass.unwrap_or(false))
+        .await?;
 
     Ok(Json(ApiResponse::success(SearchApiResult {
         items: result.items,
@@ -49,10 +49,10 @@ pub async fn get_detail(
 ) -> ApiResult<VodItem> {
     info!("获取详情API调用: {} - {}", query.source_key, query.vod_id);
 
-    let item = state.search_service.get_detail(
-        &query.source_key,
-        &query.vod_id,
-    ).await?;
+    let item = state
+        .search_service
+        .get_detail(&query.source_key, &query.vod_id)
+        .await?;
 
     Ok(Json(ApiResponse::success(item)))
 }

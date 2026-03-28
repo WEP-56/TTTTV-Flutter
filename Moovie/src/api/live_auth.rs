@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use qrcode::QrCode;
 use qrcode::render::svg;
@@ -66,7 +66,10 @@ pub async fn bilibili_qrcode(State(state): State<AppState>) -> ApiResult<Bilibil
 
     if resp["code"].as_i64().unwrap_or(-1) != 0 {
         return Err(MoovieError::ConfigError(
-            resp["message"].as_str().unwrap_or("获取二维码失败").to_string(),
+            resp["message"]
+                .as_str()
+                .unwrap_or("获取二维码失败")
+                .to_string(),
         ));
     }
 
@@ -82,10 +85,7 @@ pub async fn bilibili_qrcode(State(state): State<AppState>) -> ApiResult<Bilibil
 
     let code = QrCode::new(url.as_bytes())
         .map_err(|e| MoovieError::ConfigError(format!("二维码生成失败: {}", e)))?;
-    let svg = code
-        .render::<svg::Color>()
-        .min_dimensions(240, 240)
-        .build();
+    let svg = code.render::<svg::Color>().min_dimensions(240, 240).build();
 
     Ok(Json(ApiResponse::success(BilibiliQrCodeResponse {
         qrcode_key,
@@ -133,7 +133,10 @@ pub async fn bilibili_qrcode_poll(
 
     if body["code"].as_i64().unwrap_or(-1) != 0 {
         return Err(MoovieError::ConfigError(
-            body["message"].as_str().unwrap_or("二维码状态查询失败").to_string(),
+            body["message"]
+                .as_str()
+                .unwrap_or("二维码状态查询失败")
+                .to_string(),
         ));
     }
 
@@ -178,4 +181,3 @@ pub async fn bilibili_qrcode_poll(
         message,
     })))
 }
-

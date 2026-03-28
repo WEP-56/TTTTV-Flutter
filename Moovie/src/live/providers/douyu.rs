@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use md5::{Digest, Md5};
-use rquickjs::{Context, Runtime};
 use rquickjs::function::Func;
+use rquickjs::{Context, Runtime};
 use serde_json::Value;
 
-use crate::utils::error::{MoovieError, Result};
 use super::super::models::{LivePlayQuality, LivePlayUrl, LiveRoomDetail, LiveRoomItem};
 use super::LiveProvider;
+use crate::utils::error::{MoovieError, Result};
 
 pub struct DouyuProvider {
     client: reqwest::Client,
@@ -68,7 +68,10 @@ impl DouyuProvider {
 
         if json["error"].as_i64().unwrap_or(0) != 0 {
             return Err(MoovieError::DetailError(
-                json["msg"].as_str().unwrap_or("斗鱼签名脚本获取失败").to_string(),
+                json["msg"]
+                    .as_str()
+                    .unwrap_or("斗鱼签名脚本获取失败")
+                    .to_string(),
             ));
         }
 
@@ -130,7 +133,10 @@ impl DouyuProvider {
     async fn post_h5_play(&self, room_id: &str, args: &str) -> Result<Value> {
         let json = self
             .client
-            .post(format!("https://www.douyu.com/lapi/live/getH5Play/{}", room_id))
+            .post(format!(
+                "https://www.douyu.com/lapi/live/getH5Play/{}",
+                room_id
+            ))
             .header("user-agent", Self::user_agent())
             .header("referer", format!("https://www.douyu.com/{}", room_id))
             .header("content-type", "application/x-www-form-urlencoded")
@@ -142,7 +148,10 @@ impl DouyuProvider {
 
         if json["error"].as_i64().unwrap_or(0) != 0 {
             return Err(MoovieError::DetailError(
-                json["msg"].as_str().unwrap_or("斗鱼播放地址获取失败").to_string(),
+                json["msg"]
+                    .as_str()
+                    .unwrap_or("斗鱼播放地址获取失败")
+                    .to_string(),
             ));
         }
         Ok(json)
@@ -221,7 +230,10 @@ impl LiveProvider for DouyuProvider {
 
     async fn recommend_rooms(&self, page: i32) -> Result<Vec<LiveRoomItem>> {
         let page = if page <= 0 { 1 } else { page };
-        let url = format!("https://www.douyu.com/japi/weblist/apinc/allpage/6/{}", page);
+        let url = format!(
+            "https://www.douyu.com/japi/weblist/apinc/allpage/6/{}",
+            page
+        );
         let json = self
             .client
             .get(url)
@@ -234,7 +246,10 @@ impl LiveProvider for DouyuProvider {
 
         if json["error"].as_i64().unwrap_or(0) != 0 {
             return Err(MoovieError::SourceSearchError(
-                json["msg"].as_str().unwrap_or("斗鱼推荐获取失败").to_string(),
+                json["msg"]
+                    .as_str()
+                    .unwrap_or("斗鱼推荐获取失败")
+                    .to_string(),
             ));
         }
 
@@ -308,7 +323,9 @@ impl LiveProvider for DouyuProvider {
     async fn room_detail(&self, room_id: &str) -> Result<LiveRoomDetail> {
         let room_id = room_id.trim();
         if room_id.is_empty() {
-            return Err(MoovieError::InvalidParameter("room_id 不能为空".to_string()));
+            return Err(MoovieError::InvalidParameter(
+                "room_id 不能为空".to_string(),
+            ));
         }
 
         let room_text = self
@@ -359,7 +376,11 @@ impl LiveProvider for DouyuProvider {
 
         let online = room_obj["room_biz_all"]["hot"]
             .as_i64()
-            .or_else(|| room_obj["room_biz_all"]["hot"].as_str().map(|s| Self::parse_hot_num(s)))
+            .or_else(|| {
+                room_obj["room_biz_all"]["hot"]
+                    .as_str()
+                    .map(|s| Self::parse_hot_num(s))
+            })
             .unwrap_or(0);
 
         let show_status = room_obj["show_status"].as_i64().unwrap_or(0) == 1;

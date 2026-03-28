@@ -36,13 +36,11 @@ impl Default for Config {
             database: DatabaseConfig {
                 path: PathBuf::from("moovie.db"),
             },
-            sources: vec![
-                SourceConfig {
-                    key: "yinghua".to_string(),
-                    base_url: "https://www.yhdm.so/api.php/provide/vod/".to_string(),
-                    enabled: true,
-                },
-            ],
+            sources: vec![SourceConfig {
+                key: "yinghua".to_string(),
+                base_url: "https://www.yhdm.so/api.php/provide/vod/".to_string(),
+                enabled: true,
+            }],
         }
     }
 }

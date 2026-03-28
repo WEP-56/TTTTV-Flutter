@@ -10,9 +10,8 @@ class SearchResult {
   factory SearchResult.fromJson(Object? json) {
     final map = json as Map<String, dynamic>;
     return SearchResult(
-      items: ((map['items'] as List?) ?? const [])
-          .map(VodItem.fromJson)
-          .toList(),
+      items:
+          ((map['items'] as List?) ?? const []).map(VodItem.fromJson).toList(),
       filteredCount: _readInt(map['filtered_count']) ?? 0,
     );
   }
@@ -289,6 +288,9 @@ class SiteWithStatus {
     required this.enabled,
     this.lastCheck,
     this.isHealthy,
+    this.healthStatus,
+    this.responseTimeMs,
+    this.statusMessage,
     this.comment,
     this.r18,
     this.group,
@@ -300,9 +302,27 @@ class SiteWithStatus {
   final bool enabled;
   final int? lastCheck;
   final bool? isHealthy;
+  final String? healthStatus;
+  final int? responseTimeMs;
+  final String? statusMessage;
   final String? comment;
   final bool? r18;
   final String? group;
+
+  String get effectiveHealthStatus {
+    final normalized = healthStatus?.trim();
+    if (normalized != null && normalized.isNotEmpty) {
+      return normalized;
+    }
+    if (isHealthy == null) {
+      return 'unknown';
+    }
+    return isHealthy! ? 'healthy' : 'unhealthy';
+  }
+
+  bool get isBadHealth =>
+      effectiveHealthStatus == 'degraded' ||
+      effectiveHealthStatus == 'unhealthy';
 
   factory SiteWithStatus.fromJson(Object? json) {
     final map = json as Map<String, dynamic>;
@@ -313,6 +333,9 @@ class SiteWithStatus {
       enabled: map['enabled'] as bool? ?? false,
       lastCheck: _readInt(map['last_check']),
       isHealthy: map['is_healthy'] as bool?,
+      healthStatus: _readString(map['health_status']),
+      responseTimeMs: _readInt(map['response_time_ms']),
+      statusMessage: _readString(map['status_message']),
       comment: _readString(map['comment']),
       r18: map['r18'] as bool?,
       group: _readString(map['group']),
@@ -425,6 +448,33 @@ class AddSourcesBatchResult {
           .toList(),
       failed: ((map['failed'] as List?) ?? const [])
           .map(AddSourcesBatchFailure.fromJson)
+          .toList(),
+    );
+  }
+}
+
+class DisableBadSitesResult {
+  DisableBadSitesResult({
+    required this.disabled,
+    required this.alreadyDisabled,
+    required this.skipped,
+  });
+
+  final List<String> disabled;
+  final List<String> alreadyDisabled;
+  final List<String> skipped;
+
+  factory DisableBadSitesResult.fromJson(Object? json) {
+    final map = json as Map<String, dynamic>;
+    return DisableBadSitesResult(
+      disabled: ((map['disabled'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+      alreadyDisabled: ((map['already_disabled'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+      skipped: ((map['skipped'] as List?) ?? const [])
+          .map((item) => item.toString())
           .toList(),
     );
   }

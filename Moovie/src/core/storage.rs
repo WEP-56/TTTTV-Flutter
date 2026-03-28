@@ -1,13 +1,27 @@
+use crate::utils::error::{MoovieError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::utils::error::{Result, MoovieError};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SiteHealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteState {
     pub enabled: bool,
     pub last_check: Option<i64>,
     pub is_healthy: Option<bool>,
+    #[serde(default)]
+    pub health_status: Option<SiteHealthStatus>,
+    #[serde(default)]
+    pub response_time_ms: Option<i64>,
+    #[serde(default)]
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,10 +104,8 @@ pub struct LocalStorage {
 impl LocalStorage {
     pub fn new(path: PathBuf) -> Result<Self> {
         let data = if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| MoovieError::IoError(e))?;
-            serde_json::from_str(&content)
-                .map_err(|e| MoovieError::JsonError(e))?
+            let content = std::fs::read_to_string(&path).map_err(|e| MoovieError::IoError(e))?;
+            serde_json::from_str(&content).map_err(|e| MoovieError::JsonError(e))?
         } else {
             StorageData::default()
         };
@@ -103,26 +115,41 @@ impl LocalStorage {
 
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| MoovieError::IoError(e))?;
+            std::fs::create_dir_all(parent).map_err(|e| MoovieError::IoError(e))?;
         }
-        let content = serde_json::to_string_pretty(&self.data)
-            .map_err(|e| MoovieError::JsonError(e))?;
-        std::fs::write(&self.path, content)
-            .map_err(|e| MoovieError::IoError(e))?;
+        let content =
+            serde_json::to_string_pretty(&self.data).map_err(|e| MoovieError::JsonError(e))?;
+        std::fs::write(&self.path, content).map_err(|e| MoovieError::IoError(e))?;
         Ok(())
     }
 
     pub fn get_site_state(&self, key: &str) -> SiteState {
-        self.data.site_states.get(key).cloned().unwrap_or(SiteState {
-            enabled: true,
-            last_check: None,
-            is_healthy: None,
-        })
+        self.data
+            .site_states
+            .get(key)
+            .cloned()
+            .unwrap_or(SiteState {
+                enabled: true,
+                last_check: None,
+                is_healthy: None,
+                health_status: None,
+                response_time_ms: None,
+                status_message: None,
+            })
     }
 
     pub fn set_site_state(&mut self, key: &str, state: SiteState) -> Result<()> {
         self.data.site_states.insert(key.to_string(), state);
+        self.save()
+    }
+
+    pub fn set_site_states_batch<I>(&mut self, states: I) -> Result<()>
+    where
+        I: IntoIterator<Item = (String, SiteState)>,
+    {
+        for (key, state) in states {
+            self.data.site_states.insert(key, state);
+        }
         self.save()
     }
 
@@ -131,14 +158,18 @@ impl LocalStorage {
     }
 
     pub fn add_watch_history(&mut self, item: WatchHistoryItem) -> Result<()> {
-        self.data.watch_history.retain(|h| h.vod_id != item.vod_id || h.source_key != item.source_key);
+        self.data
+            .watch_history
+            .retain(|h| h.vod_id != item.vod_id || h.source_key != item.source_key);
         self.data.watch_history.insert(0, item);
         self.data.watch_history.truncate(100);
         self.save()
     }
 
     pub fn remove_watch_history(&mut self, vod_id: &str, source_key: &str) -> Result<()> {
-        self.data.watch_history.retain(|h| h.vod_id != vod_id || h.source_key != source_key);
+        self.data
+            .watch_history
+            .retain(|h| h.vod_id != vod_id || h.source_key != source_key);
         self.save()
     }
 
@@ -152,13 +183,17 @@ impl LocalStorage {
     }
 
     pub fn add_favorite(&mut self, item: FavoriteItem) -> Result<()> {
-        self.data.favorites.retain(|f| f.vod_id != item.vod_id || f.source_key != item.source_key);
+        self.data
+            .favorites
+            .retain(|f| f.vod_id != item.vod_id || f.source_key != item.source_key);
         self.data.favorites.insert(0, item);
         self.save()
     }
 
     pub fn remove_favorite(&mut self, vod_id: &str, source_key: &str) -> Result<()> {
-        self.data.favorites.retain(|f| f.vod_id != vod_id || f.source_key != source_key);
+        self.data
+            .favorites
+            .retain(|f| f.vod_id != vod_id || f.source_key != source_key);
         self.save()
     }
 
@@ -168,7 +203,10 @@ impl LocalStorage {
     }
 
     pub fn is_favorited(&self, vod_id: &str, source_key: &str) -> bool {
-        self.data.favorites.iter().any(|f| f.vod_id == vod_id && f.source_key == source_key)
+        self.data
+            .favorites
+            .iter()
+            .any(|f| f.vod_id == vod_id && f.source_key == source_key)
     }
 
     pub fn get_favorites(&self) -> &[FavoriteItem] {

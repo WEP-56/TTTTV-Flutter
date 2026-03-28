@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::io::Read;
 use std::time::Duration;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as WsMessage};
+use tokio_tungstenite::tungstenite::{Message as WsMessage, client::IntoClientRequest};
 
 use crate::live::models::{LiveMessage, LiveMessageColor, LiveMessageType};
 use crate::live::providers::bilibili::BiliBiliProvider;
@@ -21,13 +21,15 @@ pub async fn bridge(
     let provider = BiliBiliProvider::new(http_client.clone(), cookie);
     let info = provider.get_danmaku_info(&room_id).await?;
     if info.token.is_empty() {
-        return Err(MoovieError::ConfigError("Bilibili 弹幕 token 获取失败".to_string()));
+        return Err(MoovieError::ConfigError(
+            "Bilibili 弹幕 token 获取失败".to_string(),
+        ));
     }
 
     let ws_url = format!("wss://{}/sub", info.server_host);
-    let mut request = ws_url.into_client_request().map_err(|e| {
-        MoovieError::InvalidParameter(format!("ws url 解析失败: {}", e))
-    })?;
+    let mut request = ws_url
+        .into_client_request()
+        .map_err(|e| MoovieError::InvalidParameter(format!("ws url 解析失败: {}", e)))?;
     if !info.cookie.trim().is_empty() {
         request.headers_mut().insert(
             "cookie",
@@ -123,12 +125,18 @@ fn decode_bilibili_message(data: &[u8]) -> Vec<LiveMessage> {
         match pkt.operation {
             3 => {
                 if pkt.body.len() >= 4 {
-                    let online = i32::from_be_bytes([pkt.body[0], pkt.body[1], pkt.body[2], pkt.body[3]]) as i64;
+                    let online =
+                        i32::from_be_bytes([pkt.body[0], pkt.body[1], pkt.body[2], pkt.body[3]])
+                            as i64;
                     all.push(LiveMessage {
                         kind: LiveMessageType::Online,
                         user_name: "".to_string(),
                         message: "".to_string(),
-                        color: LiveMessageColor { r: 255, g: 255, b: 255 },
+                        color: LiveMessageColor {
+                            r: 255,
+                            g: 255,
+                            b: 255,
+                        },
                         data: Some(serde_json::json!(online)),
                     });
                 }
@@ -152,7 +160,11 @@ fn decode_bilibili_message(data: &[u8]) -> Vec<LiveMessage> {
                     let nested = parse_packets(&body);
                     if !nested.is_empty() && nested.iter().all(|p| p.packet_len >= 16) {
                         for n in nested {
-                            all.extend(decode_bilibili_message(&encode_packet(&n.body, n.operation, n.protocol_version)));
+                            all.extend(decode_bilibili_message(&encode_packet(
+                                &n.body,
+                                n.operation,
+                                n.protocol_version,
+                            )));
                         }
                         continue;
                     }
@@ -230,7 +242,11 @@ fn parse_json_messages(bytes: &[u8]) -> Vec<LiveMessage> {
             if let Some(cmd) = obj.get("cmd").and_then(|v| v.as_str()) {
                 if cmd.contains("DANMU_MSG") {
                     if let Some(info) = obj.get("info").and_then(|v| v.as_array()) {
-                        let message = info.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let message = info
+                            .get(1)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let color_num = info
                             .get(0)
                             .and_then(|v| v.as_array())
@@ -259,7 +275,11 @@ fn parse_json_messages(bytes: &[u8]) -> Vec<LiveMessage> {
                             kind: LiveMessageType::SuperChat,
                             user_name: "SUPER_CHAT".to_string(),
                             message: "SUPER_CHAT".to_string(),
-                            color: LiveMessageColor { r: 255, g: 255, b: 255 },
+                            color: LiveMessageColor {
+                                r: 255,
+                                g: 255,
+                                b: 255,
+                            },
                             data: Some(data.clone()),
                         });
                     }
@@ -273,7 +293,11 @@ fn parse_json_messages(bytes: &[u8]) -> Vec<LiveMessage> {
 
 fn color_number_to_rgb(color: i64) -> LiveMessageColor {
     if color <= 0 {
-        return LiveMessageColor { r: 255, g: 255, b: 255 };
+        return LiveMessageColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
     }
     let mut hex = format!("{:x}", color as u64);
     if hex.len() == 4 {
@@ -283,7 +307,11 @@ fn color_number_to_rgb(color: i64) -> LiveMessageColor {
         hex = hex.chars().skip(2).collect();
     }
     if hex.len() != 6 {
-        return LiveMessageColor { r: 255, g: 255, b: 255 };
+        return LiveMessageColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
     }
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);

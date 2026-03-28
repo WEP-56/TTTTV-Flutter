@@ -19,9 +19,12 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
   late final TextEditingController _remoteFilterController;
 
   final Set<String> _selectedRemoteKeys = <String>{};
+  final Set<String> _checkingSiteKeys = <String>{};
 
   bool _remoteLoading = false;
   bool _addingRemote = false;
+  bool _checkingAllSites = false;
+  bool _disablingBadSites = false;
   String? _remoteError;
   RemoteSourcesResponse? _remoteResponse;
 
@@ -79,16 +82,25 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
-                _SourceSummaryCard(sites: sites),
+                _SourceHealthSummaryCard(sites: sites),
                 const SizedBox(height: 16),
-                _InstalledSourcesSection(
+                _InstalledSourcesManagerSection(
                   filterController: _installedFilterController,
                   sites: filteredSites,
                   totalCount: sites.length,
+                  checkingAllSites: _checkingAllSites,
+                  disablingBadSites: _disablingBadSites,
+                  badEnabledCount: sites
+                      .where((site) => site.enabled && site.isBadHealth)
+                      .length,
+                  checkingSiteKeys: _checkingSiteKeys,
                   onAddSource: _showAddSourceDialog,
+                  onCheckAllSites: () => _checkAllSites(sites),
+                  onDisableBadSites: () => _disableBadSites(sites),
                   onViewSource: _showSourceDetail,
                   onDeleteSource: _deleteSource,
                   onToggleEnabled: _toggleSite,
+                  onCheckSource: _checkSite,
                 ),
                 const SizedBox(height: 16),
                 _RemoteImportSection(
@@ -152,6 +164,106 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
     } catch (error) {
       if (mounted) {
         _showMessage('切换失败：$error');
+      }
+    }
+  }
+
+  Future<void> _checkSite(SiteWithStatus site) async {
+    if (_checkingSiteKeys.contains(site.key) || _checkingAllSites) return;
+
+    setState(() => _checkingSiteKeys.add(site.key));
+    try {
+      final result = await ref.read(sourcesRepositoryProvider).checkSites(
+            key: site.key,
+          );
+      await _refreshSites();
+      if (!mounted) return;
+
+      final checkedSite = result.isNotEmpty ? result.first : site;
+      _showMessage('${checkedSite.name}：${_healthLabel(checkedSite)}');
+    } catch (error) {
+      if (mounted) {
+        _showMessage('检查失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _checkingSiteKeys.remove(site.key));
+      }
+    }
+  }
+
+  Future<void> _checkAllSites(List<SiteWithStatus> sites) async {
+    if (_checkingAllSites || sites.isEmpty) return;
+
+    setState(() => _checkingAllSites = true);
+    try {
+      final result = await ref.read(sourcesRepositoryProvider).checkSites();
+      await _refreshSites();
+      if (!mounted) return;
+
+      final healthyCount = result
+          .where((site) => site.effectiveHealthStatus == 'healthy')
+          .length;
+      final degradedCount = result
+          .where((site) => site.effectiveHealthStatus == 'degraded')
+          .length;
+      final unhealthyCount = result
+          .where((site) => site.effectiveHealthStatus == 'unhealthy')
+          .length;
+      final unknownCount = result
+          .where((site) => site.effectiveHealthStatus == 'unknown')
+          .length;
+
+      _showMessage(
+        '检查完成：健康 $healthyCount，较差 $degradedCount，异常 $unhealthyCount，未知 $unknownCount',
+      );
+    } catch (error) {
+      if (mounted) {
+        _showMessage('批量检查失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _checkingAllSites = false);
+      }
+    }
+  }
+
+  Future<void> _disableBadSites(List<SiteWithStatus> sites) async {
+    if (_disablingBadSites) return;
+
+    final badEnabledCount =
+        sites.where((site) => site.enabled && site.isBadHealth).length;
+    if (badEnabledCount == 0) {
+      _showMessage('当前没有可批量禁用的状态不佳片源');
+      return;
+    }
+
+    final confirmed = await _confirmAction(
+      context,
+      title: '批量禁用状态不佳片源',
+      message: '将禁用 $badEnabledCount 个状态为“较差”或“异常”的片源，是否继续？',
+      confirmLabel: '立即禁用',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _disablingBadSites = true);
+    try {
+      final result =
+          await ref.read(sourcesRepositoryProvider).disableBadSites();
+      await _refreshSites();
+      if (!mounted) return;
+
+      _showMessage(
+        '已禁用 ${result.disabled.length} 个片源'
+        '${result.alreadyDisabled.isNotEmpty ? '，${result.alreadyDisabled.length} 个原本已停用' : ''}',
+      );
+    } catch (error) {
+      if (mounted) {
+        _showMessage('批量禁用失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _disablingBadSites = false);
       }
     }
   }
@@ -487,6 +599,7 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
   }
 }
 
+// ignore: unused_element
 class _SourceSummaryCard extends StatelessWidget {
   const _SourceSummaryCard({required this.sites});
 
@@ -521,6 +634,7 @@ class _SourceSummaryCard extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _InstalledSourcesSection extends StatelessWidget {
   const _InstalledSourcesSection({
     required this.filterController,
@@ -1084,6 +1198,403 @@ class _SourcesErrorView extends StatelessWidget {
     );
   }
 }
+
+class _SourceHealthSummaryCard extends StatelessWidget {
+  const _SourceHealthSummaryCard({required this.sites});
+
+  final List<SiteWithStatus> sites;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabledCount = sites.where((site) => site.enabled).length;
+    final disabledCount = sites.length - enabledCount;
+    final healthyCount =
+        sites.where((site) => site.effectiveHealthStatus == 'healthy').length;
+    final badCount = sites.where((site) => site.isBadHealth).length;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _MetricChip(
+                icon: Icons.link_rounded, label: '共 ${sites.length} 个片源'),
+            _MetricChip(
+              icon: Icons.check_circle_outline,
+              label: '启用 $enabledCount',
+            ),
+            _MetricChip(
+              icon: Icons.pause_circle_outline,
+              label: '停用 $disabledCount',
+            ),
+            _MetricChip(
+              icon: Icons.health_and_safety_outlined,
+              label: '健康 $healthyCount',
+            ),
+            _MetricChip(
+              icon: Icons.warning_amber_rounded,
+              label: '状态不佳 $badCount',
+              danger: badCount > 0,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InstalledSourcesManagerSection extends StatelessWidget {
+  const _InstalledSourcesManagerSection({
+    required this.filterController,
+    required this.sites,
+    required this.totalCount,
+    required this.checkingAllSites,
+    required this.disablingBadSites,
+    required this.badEnabledCount,
+    required this.checkingSiteKeys,
+    required this.onAddSource,
+    required this.onCheckAllSites,
+    required this.onDisableBadSites,
+    required this.onViewSource,
+    required this.onDeleteSource,
+    required this.onToggleEnabled,
+    required this.onCheckSource,
+  });
+
+  final TextEditingController filterController;
+  final List<SiteWithStatus> sites;
+  final int totalCount;
+  final bool checkingAllSites;
+  final bool disablingBadSites;
+  final int badEnabledCount;
+  final Set<String> checkingSiteKeys;
+  final VoidCallback onAddSource;
+  final Future<void> Function() onCheckAllSites;
+  final Future<void> Function() onDisableBadSites;
+  final Future<void> Function(SiteWithStatus site) onViewSource;
+  final Future<void> Function(SiteWithStatus site) onDeleteSource;
+  final Future<void> Function(SiteWithStatus site, bool enabled)
+      onToggleEnabled;
+  final Future<void> Function(SiteWithStatus site) onCheckSource;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text('已安装片源', style: Theme.of(context).textTheme.titleLarge),
+                FilledButton.tonalIcon(
+                  onPressed: checkingAllSites ? null : onCheckAllSites,
+                  icon: checkingAllSites
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.health_and_safety_outlined),
+                  label: Text(checkingAllSites ? '检查中...' : '批量检查'),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: disablingBadSites || badEnabledCount == 0
+                      ? null
+                      : onDisableBadSites,
+                  icon: disablingBadSites
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.power_settings_new_rounded),
+                  label: Text(
+                    badEnabledCount == 0 ? '无不佳片源' : '禁用不佳片源',
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: onAddSource,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('新增'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '支持单个检查、批量检查，并可批量停用状态较差或异常的片源。',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: filterController,
+              decoration: InputDecoration(
+                hintText: '搜索已安装片源',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: filterController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: filterController.clear,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              '当前显示 ${sites.length} / $totalCount',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 10),
+            if (sites.isEmpty)
+              const _SectionHint(
+                title: '没有找到片源',
+                description: '可以清空筛选条件，或通过“新增”手动添加片源。',
+              )
+            else
+              ...sites.map(
+                (site) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ManagedInstalledSourceCard(
+                    site: site,
+                    checking:
+                        checkingAllSites || checkingSiteKeys.contains(site.key),
+                    onViewSource: () => onViewSource(site),
+                    onDeleteSource: () => onDeleteSource(site),
+                    onToggleEnabled: (value) => onToggleEnabled(site, value),
+                    onCheckSource: () => onCheckSource(site),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ManagedInstalledSourceCard extends StatelessWidget {
+  const _ManagedInstalledSourceCard({
+    required this.site,
+    required this.checking,
+    required this.onViewSource,
+    required this.onDeleteSource,
+    required this.onToggleEnabled,
+    required this.onCheckSource,
+  });
+
+  final SiteWithStatus site;
+  final bool checking;
+  final Future<void> Function() onViewSource;
+  final Future<void> Function() onDeleteSource;
+  final ValueChanged<bool> onToggleEnabled;
+  final Future<void> Function() onCheckSource;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: colorScheme.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        site.name,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        site.key,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'view') {
+                      onViewSource();
+                    } else if (value == 'delete') {
+                      onDeleteSource();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem<String>(value: 'view', child: Text('查看详情')),
+                    PopupMenuItem<String>(value: 'delete', child: Text('删除片源')),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(site.baseUrl, style: Theme.of(context).textTheme.bodyMedium),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (site.group?.isNotEmpty == true)
+                  _MetricChip(
+                    icon: Icons.folder_open_rounded,
+                    label: site.group!,
+                  ),
+                _MetricChip(
+                  icon: site.enabled
+                      ? Icons.toggle_on_rounded
+                      : Icons.toggle_off_rounded,
+                  label: site.enabled ? '已启用' : '已停用',
+                ),
+                _MetricChip(
+                  icon: _healthIcon(site),
+                  label: _healthChipLabel(site),
+                  danger: site.isBadHealth,
+                ),
+                if (site.r18 == true)
+                  const _MetricChip(
+                    icon: Icons.explicit_rounded,
+                    label: 'R18',
+                    danger: true,
+                  ),
+              ],
+            ),
+            if (site.lastCheck != null ||
+                site.statusMessage?.isNotEmpty == true) ...[
+              const SizedBox(height: 10),
+              Text(
+                [
+                  '上次检查：${_formatLastCheck(site.lastCheck)}',
+                  if (site.statusMessage?.isNotEmpty == true)
+                    site.statusMessage!,
+                ].join('  ·  '),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+            if (site.comment?.isNotEmpty == true) ...[
+              const SizedBox(height: 10),
+              Text(
+                site.comment!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: checking ? null : onCheckSource,
+                  icon: checking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.health_and_safety_outlined),
+                  label: Text(checking ? '检查中...' : '检查状态'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: site.enabled,
+              onChanged: onToggleEnabled,
+              title: const Text('启用该片源'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _healthLabel(SiteWithStatus site) {
+  switch (site.effectiveHealthStatus) {
+    case 'healthy':
+      return '健康';
+    case 'degraded':
+      return '较差';
+    case 'unhealthy':
+      return '异常';
+    default:
+      return '状态未知';
+  }
+}
+
+String _healthChipLabel(SiteWithStatus site) {
+  final label = _healthLabel(site);
+  final responseTime = site.responseTimeMs;
+  if (responseTime == null) {
+    return label;
+  }
+  return '$label ${_formatResponseTime(responseTime)}';
+}
+
+IconData _healthIcon(SiteWithStatus site) {
+  switch (site.effectiveHealthStatus) {
+    case 'healthy':
+      return Icons.health_and_safety_outlined;
+    case 'degraded':
+      return Icons.speed_rounded;
+    case 'unhealthy':
+      return Icons.error_outline_rounded;
+    default:
+      return Icons.help_outline_rounded;
+  }
+}
+
+String _formatLastCheck(int? timestamp) {
+  if (timestamp == null || timestamp <= 0) {
+    return '未检查';
+  }
+
+  final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
+  return '${dateTime.year}-${_twoDigits(dateTime.month)}-${_twoDigits(dateTime.day)} '
+      '${_twoDigits(dateTime.hour)}:${_twoDigits(dateTime.minute)}';
+}
+
+String _formatResponseTime(int? responseTimeMs) {
+  if (responseTimeMs == null || responseTimeMs <= 0) {
+    return '未知';
+  }
+  if (responseTimeMs < 1000) {
+    return '${responseTimeMs}ms';
+  }
+  final seconds = responseTimeMs / 1000;
+  final fractionDigits = responseTimeMs >= 10000 ? 0 : 1;
+  return '${seconds.toStringAsFixed(fractionDigits)}s';
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 Future<bool> _confirmAction(
   BuildContext context, {

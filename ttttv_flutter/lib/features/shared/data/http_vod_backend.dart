@@ -170,6 +170,20 @@ class HttpVodBackend
   }
 
   @override
+  Future<List<SiteWithStatus>> checkSites({String? key}) {
+    return _client.postData<List<SiteWithStatus>>(
+      '/api/sources/check',
+      queryParameters: {
+        if (key != null && key.trim().isNotEmpty) 'key': key.trim(),
+      },
+      decoder: (json) {
+        final list = (json as List?) ?? const [];
+        return list.map(SiteWithStatus.fromJson).toList();
+      },
+    );
+  }
+
+  @override
   Future<void> toggleSite({
     required String key,
     required bool enabled,
@@ -218,6 +232,14 @@ class HttpVodBackend
       '/api/sources/add_batch',
       body: sources.map((source) => source.toJson()).toList(),
       decoder: AddSourcesBatchResult.fromJson,
+    );
+  }
+
+  @override
+  Future<DisableBadSitesResult> disableBadSites() {
+    return _client.postData<DisableBadSitesResult>(
+      '/api/sources/disable_bad',
+      decoder: DisableBadSitesResult.fromJson,
     );
   }
 }
