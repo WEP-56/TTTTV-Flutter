@@ -49,6 +49,7 @@ class LiveRoomCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
       child: InkWell(
         onTap: onTap,
         child: Column(
@@ -130,22 +131,40 @@ class LiveRoomCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     room.title,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
+                      height: 1.2,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer
+                              .withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.person_rounded,
+                          size: 12,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           room.userName,
@@ -158,12 +177,23 @@ class LiveRoomCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        _platformLabel,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _platformLabel,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.85),
+                          ),
                         ),
                       ),
                     ],

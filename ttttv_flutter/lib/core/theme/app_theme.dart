@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _kSeedKey = 'theme_seed_color';
+const _kThemeModeKey = 'theme_mode';
 const _kDefaultSeed = Color(0xFF6750A4);
 
 final _prefsProvider = FutureProvider<SharedPreferences>(
@@ -10,8 +11,12 @@ final _prefsProvider = FutureProvider<SharedPreferences>(
 );
 
 class ThemeState {
-  const ThemeState({this.seedColor = _kDefaultSeed});
+  const ThemeState({
+    this.seedColor = _kDefaultSeed,
+    this.themeMode = ThemeMode.system,
+  });
   final Color seedColor;
+  final ThemeMode themeMode;
 
   ThemeData get light => _buildTheme(Brightness.light, seedColor);
   ThemeData get dark => _buildTheme(Brightness.dark, seedColor);
@@ -26,8 +31,14 @@ class ThemeState {
     );
   }
 
-  ThemeState copyWith({Color? seedColor}) =>
-      ThemeState(seedColor: seedColor ?? this.seedColor);
+  ThemeState copyWith({
+    Color? seedColor,
+    ThemeMode? themeMode,
+  }) =>
+      ThemeState(
+        seedColor: seedColor ?? this.seedColor,
+        themeMode: themeMode ?? this.themeMode,
+      );
 }
 
 class ThemeNotifier extends Notifier<ThemeState> {
@@ -35,10 +46,12 @@ class ThemeNotifier extends Notifier<ThemeState> {
   ThemeState build() {
     ref.listen(_prefsProvider, (_, next) {
       next.whenData((prefs) {
-        final value = prefs.getInt(_kSeedKey);
-        if (value != null) {
-          state = state.copyWith(seedColor: Color(value));
-        }
+        final seedValue = prefs.getInt(_kSeedKey);
+        final themeModeValue = prefs.getString(_kThemeModeKey);
+        state = state.copyWith(
+          seedColor: seedValue != null ? Color(seedValue) : state.seedColor,
+          themeMode: _themeModeFromStorage(themeModeValue),
+        );
       });
     });
     return const ThemeState();
@@ -48,6 +61,12 @@ class ThemeNotifier extends Notifier<ThemeState> {
     state = state.copyWith(seedColor: color);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kSeedKey, color.toARGB32());
+  }
+
+  Future<void> setThemeMode(ThemeMode themeMode) async {
+    state = state.copyWith(themeMode: themeMode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kThemeModeKey, themeMode.name);
   }
 }
 
@@ -64,3 +83,15 @@ const List<({String label, Color color})> kAccentPresets = [
   (label: '橙金', color: Color(0xFFE65100)),
   (label: '石墨', color: Color(0xFF49454F)),
 ];
+
+ThemeMode _themeModeFromStorage(String? value) {
+  switch (value) {
+    case 'light':
+      return ThemeMode.light;
+    case 'dark':
+      return ThemeMode.dark;
+    case 'system':
+    default:
+      return ThemeMode.system;
+  }
+}

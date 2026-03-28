@@ -15,7 +15,7 @@ class TtttvApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: theme.light,
       darkTheme: theme.dark,
-      themeMode: ThemeMode.system,
+      themeMode: theme.themeMode,
       home: const AppShell(),
     );
   }

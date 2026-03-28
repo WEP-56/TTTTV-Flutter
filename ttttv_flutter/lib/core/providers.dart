@@ -25,6 +25,7 @@ import '../features/live/providers/custom/custom_m3u_provider.dart';
 import '../features/play/domain/play_repository.dart';
 import '../features/search/application/search_controller.dart';
 import '../features/search/domain/search_repository.dart';
+import '../features/settings/domain/storage_manager.dart';
 import '../features/settings/domain/sources_repository.dart';
 import '../features/shared/data/http_vod_backend.dart';
 import 'config/backend_config.dart';
@@ -71,6 +72,15 @@ final favoritesRepositoryProvider = Provider<FavoritesRepository>((ref) {
 
 final sourcesRepositoryProvider = Provider<SourcesRepository>((ref) {
   return ref.watch(vodBackendProvider);
+});
+
+final storageManagerProvider = Provider<StorageManager>((ref) {
+  return StorageManager();
+});
+
+final cacheUsageProvider = FutureProvider<CacheUsage>((ref) async {
+  final manager = ref.watch(storageManagerProvider);
+  return manager.getCacheUsage();
 });
 
 final doubanChartProvider = FutureProvider<List<DoubanSubject>>((ref) async {

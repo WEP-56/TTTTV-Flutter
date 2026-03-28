@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -559,22 +561,46 @@ class _LivePageState extends ConsumerState<LivePage> {
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 280,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.72,
-      ),
-      itemCount: state.rooms.length,
-      itemBuilder: (context, index) {
-        final room = state.rooms[index];
-        return LiveRoomCard(
-          room: room,
-          resolveImageUrl: (_, url) =>
-              activeProvider?.resolveImageUrl(url) ?? url,
-          onTap: () => _openRoom(context, room),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const horizontalPadding = 16.0 * 2;
+        const maxCrossAxisExtent = 280.0;
+        const spacing = 12.0;
+        const detailsHeight = 76.0;
+
+        final availableWidth = math.max(
+          0.0,
+          constraints.maxWidth - horizontalPadding,
+        );
+        final crossAxisCount = math.max(
+          1,
+          ((availableWidth + spacing) / (maxCrossAxisExtent + spacing)).floor(),
+        );
+        final totalSpacing = spacing * (crossAxisCount - 1);
+        final cardWidth = math.max(
+          160.0,
+          (availableWidth - totalSpacing) / crossAxisCount,
+        );
+        final cardHeight = (cardWidth * 9 / 16) + detailsHeight;
+
+        return GridView.builder(
+          padding: const EdgeInsets.all(16),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+            mainAxisExtent: cardHeight,
+          ),
+          itemCount: state.rooms.length,
+          itemBuilder: (context, index) {
+            final room = state.rooms[index];
+            return LiveRoomCard(
+              room: room,
+              resolveImageUrl: (_, url) =>
+                  activeProvider?.resolveImageUrl(url) ?? url,
+              onTap: () => _openRoom(context, room),
+            );
+          },
         );
       },
     );

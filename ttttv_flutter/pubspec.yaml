@@ -16,6 +16,7 @@ dependencies:
   file_picker: ^10.3.2
   fixnum: ^1.1.1
   flutter_riverpod: ^2.6.1
+  path_provider: ^2.1.5
   protobuf: ^3.1.0
   shared_preferences: ^2.5.3
   video_player: ^2.10.0
