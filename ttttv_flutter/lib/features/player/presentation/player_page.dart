@@ -38,6 +38,8 @@ class PlayerPage extends ConsumerStatefulWidget {
 class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
   static const Duration _controlsHideDelay = Duration(seconds: 3);
   static const Duration _seekStep = Duration(seconds: 10);
+  static const Duration _seekRecoveryDelay = Duration(seconds: 8);
+  static const Duration _seekCompletionTolerance = Duration(seconds: 2);
   static const double _panelMinWidth = 280;
   static const double _panelMaxWidth = 420;
   static const double _fullscreenPanelWidth = 360;
@@ -55,6 +57,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
   late final Player _player;
   late final VideoController _videoController;
   late final StreamSubscription<bool> _playingSubscription;
+  late final StreamSubscription<Duration> _positionSubscription;
+  late final StreamSubscription<bool> _bufferingSubscription;
+  late final StreamSubscription<Duration> _bufferSubscription;
   late final HistoryRepository _historyRepository;
 
   late int _sourceIndex;
@@ -73,7 +78,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
   String? _loadError;
   Timer? _hideTimer;
   Timer? _fullscreenPanelCloseTimer;
+  Timer? _seekRecoveryTimer;
   String? _lastPersistSignature;
+  bool _isBuffering = false;
+  bool _isSeeking = false;
+  bool _isRecoveringFromSeek = false;
+  Duration _bufferPosition = Duration.zero;
+  Duration? _pendingSeekTarget;
+  int _seekGeneration = 0;
 
   PlayEpisode get _currentEpisode =>
       widget.playResult.sources[_sourceIndex].episodes[_episodeIndex];
@@ -104,6 +116,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
     _player = Player();
     _videoController = VideoController(_player);
     _playingSubscription = _player.stream.playing.listen(_handlePlayingChanged);
+    _positionSubscription =
+        _player.stream.position.listen(_handlePositionChanged);
+    _bufferingSubscription =
+        _player.stream.buffering.listen(_handleBufferingChanged);
+    _bufferSubscription = _player.stream.buffer.listen(_handleBufferChanged);
 
     windowManager.addListener(this);
     _keyboardFocusNode.requestFocus();
@@ -118,8 +135,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
     windowManager.removeListener(this);
     _hideTimer?.cancel();
     _fullscreenPanelCloseTimer?.cancel();
+    _seekRecoveryTimer?.cancel();
     _keyboardFocusNode.dispose();
     _playingSubscription.cancel();
+    _positionSubscription.cancel();
+    _bufferingSubscription.cancel();
+    _bufferSubscription.cancel();
     unawaited(_persistProgress());
     if (_isFullscreen) {
       unawaited(windowManager.setFullScreen(false));
@@ -173,6 +194,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
     if (_showControls) {
       _startHideTimer();
     }
+  }
+
+  void _handlePositionChanged(Duration position) {
+    final target = _pendingSeekTarget;
+    if (target == null || !_hasReachedSeekTarget(position, target)) {
+      return;
+    }
+
+    _seekRecoveryTimer?.cancel();
+    _pendingSeekTarget = null;
+    if (!mounted || !_isSeeking) {
+      return;
+    }
+    setState(() => _isSeeking = false);
+  }
+
+  void _handleBufferingChanged(bool buffering) {
+    if (!mounted) return;
+    setState(() => _isBuffering = buffering);
+  }
+
+  void _handleBufferChanged(Duration buffer) {
+    if (!mounted) return;
+    setState(() => _bufferPosition = buffer);
+  }
+
+  bool _hasReachedSeekTarget(Duration position, Duration target) {
+    final delta = position - target;
+    return delta.abs() <= _seekCompletionTolerance || position > target;
   }
 
   void _startHideTimer() {
@@ -240,10 +290,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
   }
 
   Future<void> _loadEpisode({double startAtSeconds = 0}) async {
+    _seekRecoveryTimer?.cancel();
+    _seekGeneration += 1;
+    _pendingSeekTarget = null;
     setState(() {
       _initialized = false;
+      _isBuffering = false;
+      _isSeeking = false;
       _loadError = null;
       _showControls = true;
+      _bufferPosition = Duration.zero;
     });
     try {
       await _player.open(Media(_currentEpisode.url), play: false);
@@ -314,8 +370,54 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
               duration.inMilliseconds,
             ),
           );
-    await _player.seek(clamped);
+    final wasPlaying = _player.state.playing;
+    final seekGeneration = ++_seekGeneration;
+    _seekRecoveryTimer?.cancel();
+    setState(() {
+      _isSeeking = true;
+      _loadError = null;
+    });
+    _pendingSeekTarget = clamped;
+    _seekRecoveryTimer = Timer(
+      _seekRecoveryDelay,
+      () => unawaited(_recoverFromStalledSeek(seekGeneration, clamped)),
+    );
+    try {
+      await _player.seek(clamped);
+      if (wasPlaying && !_player.state.playing) {
+        await _player.play();
+      }
+    } catch (error) {
+      _seekRecoveryTimer?.cancel();
+      _pendingSeekTarget = null;
+      if (mounted) {
+        setState(() {
+          _isSeeking = false;
+          _loadError = error.toString();
+        });
+      }
+      return;
+    }
     _showControlsNow();
+  }
+
+  Future<void> _recoverFromStalledSeek(
+    int seekGeneration,
+    Duration target,
+  ) async {
+    if (!mounted ||
+        seekGeneration != _seekGeneration ||
+        _isRecoveringFromSeek ||
+        _pendingSeekTarget == null) {
+      return;
+    }
+
+    _isRecoveringFromSeek = true;
+    try {
+      await _loadEpisode(startAtSeconds: target.inMilliseconds / 1000);
+    } finally {
+      _isRecoveringFromSeek = false;
+    }
   }
 
   Future<void> _seekRelative(Duration delta) async {
@@ -616,6 +718,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
               controller: _videoController,
               initialized: _initialized,
               fit: _videoFit,
+              showLoadingIndicator: _loadError == null &&
+                  (!_initialized || _isSeeking || _isBuffering),
+              loadingLabel: _isSeeking
+                  ? '正在定位播放位置...'
+                  : _isBuffering
+                      ? '缓冲中...'
+                      : '加载中...',
               errorText: _loadError,
               onRetry: () => _loadEpisode(),
             ),
@@ -629,6 +738,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
                   subtitle:
                       '${_currentSource.name.isEmpty ? '线路 ${_sourceIndex + 1}' : _currentSource.name} · ${_currentEpisode.name}',
                   player: _player,
+                  bufferPosition: _bufferPosition,
                   fullscreen: fullscreen,
                   canPlayPrevious: _canPlayPrevious,
                   canPlayNext: _canPlayNext,

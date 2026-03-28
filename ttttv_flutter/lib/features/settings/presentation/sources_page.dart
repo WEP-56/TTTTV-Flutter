@@ -981,50 +981,53 @@ class _RemoteImportSection extends StatelessWidget {
                 description: '输入远程索引地址并点击“扫描”，即可查看可导入的远程片源。',
               )
             else
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 420),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: sources.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final source = sources[index];
-                    final installed = existingSourceKeys.contains(source.key);
-                    final selected = selectedRemoteKeys.contains(source.key);
+              Column(
+                children: [
+                  for (var index = 0; index < sources.length; index++) ...[
+                    if (index > 0) const SizedBox(height: 8),
+                    Builder(
+                      builder: (context) {
+                        final source = sources[index];
+                        final installed =
+                            existingSourceKeys.contains(source.key);
+                        final selected =
+                            selectedRemoteKeys.contains(source.key);
 
-                    return CheckboxListTile(
-                      value: installed ? true : selected,
-                      onChanged: installed
-                          ? null
-                          : (value) =>
-                              onToggleSelection(source.key, value ?? false),
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          Text(source.name),
-                          if (source.group?.isNotEmpty == true)
-                            Chip(label: Text(source.group!)),
-                          Chip(label: Text(installed ? '已安装' : '可导入')),
-                          if (source.r18 == true)
-                            const Chip(label: Text('R18')),
-                        ],
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          [
-                            source.key,
-                            source.api,
-                            if (source.comment?.isNotEmpty == true)
-                              source.comment!,
-                          ].join('\n'),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                        return CheckboxListTile(
+                          value: installed ? true : selected,
+                          onChanged: installed
+                              ? null
+                              : (value) =>
+                                  onToggleSelection(source.key, value ?? false),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          title: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              Text(source.name),
+                              if (source.group?.isNotEmpty == true)
+                                Chip(label: Text(source.group!)),
+                              Chip(label: Text(installed ? '已安装' : '可导入')),
+                              if (source.r18 == true)
+                                const Chip(label: Text('R18')),
+                            ],
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              [
+                                source.key,
+                                source.api,
+                                if (source.comment?.isNotEmpty == true)
+                                  source.comment!,
+                              ].join('\n'),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ],
               ),
             const SizedBox(height: 16),
             FilledButton.icon(

@@ -6,6 +6,8 @@ class PlayerVideoSurface extends StatelessWidget {
     required this.controller,
     required this.initialized,
     required this.fit,
+    required this.showLoadingIndicator,
+    required this.loadingLabel,
     this.errorText,
     this.onRetry,
     super.key,
@@ -14,6 +16,8 @@ class PlayerVideoSurface extends StatelessWidget {
   final VideoController controller;
   final bool initialized;
   final BoxFit fit;
+  final bool showLoadingIndicator;
+  final String loadingLabel;
   final String? errorText;
   final VoidCallback? onRetry;
 
@@ -33,6 +37,43 @@ class PlayerVideoSurface extends StatelessWidget {
           else
             const Center(
               child: CircularProgressIndicator(color: Colors.white),
+            ),
+          if (showLoadingIndicator && errorText == null)
+            Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.54),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.4),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        loadingLabel,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           if (errorText != null)
             Center(

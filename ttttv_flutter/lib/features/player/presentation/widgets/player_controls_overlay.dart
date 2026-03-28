@@ -8,6 +8,7 @@ class PlayerControlsOverlay extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.player,
+    required this.bufferPosition,
     required this.fullscreen,
     required this.canPlayPrevious,
     required this.canPlayNext,
@@ -35,6 +36,7 @@ class PlayerControlsOverlay extends StatelessWidget {
   final String title;
   final String subtitle;
   final Player player;
+  final Duration bufferPosition;
   final bool fullscreen;
   final bool canPlayPrevious;
   final bool canPlayNext;
@@ -97,6 +99,7 @@ class PlayerControlsOverlay extends StatelessWidget {
                 padding: EdgeInsets.fromLTRB(18, fullscreen ? 24 : 16, 18, 18),
                 child: _BottomDock(
                   player: player,
+                  bufferPosition: bufferPosition,
                   volume: volume,
                   playbackSpeed: playbackSpeed,
                   fitMode: fitMode,
@@ -206,6 +209,7 @@ class _TopBar extends StatelessWidget {
 class _BottomDock extends StatelessWidget {
   const _BottomDock({
     required this.player,
+    required this.bufferPosition,
     required this.volume,
     required this.playbackSpeed,
     required this.fitMode,
@@ -227,6 +231,7 @@ class _BottomDock extends StatelessWidget {
   });
 
   final Player player;
+  final Duration bufferPosition;
   final double volume;
   final double playbackSpeed;
   final int fitMode;
@@ -265,6 +270,7 @@ class _BottomDock extends StatelessWidget {
               children: [
                 _PlayerScrubber(
                   player: player,
+                  bufferPosition: bufferPosition,
                   onPointerActivity: onPointerActivity,
                   onInteractionStart: onInteractionStart,
                   onInteractionEnd: onInteractionEnd,
@@ -367,6 +373,7 @@ class _BottomDock extends StatelessWidget {
 class _PlayerScrubber extends StatefulWidget {
   const _PlayerScrubber({
     required this.player,
+    required this.bufferPosition,
     required this.onPointerActivity,
     required this.onInteractionStart,
     required this.onInteractionEnd,
@@ -374,6 +381,7 @@ class _PlayerScrubber extends StatefulWidget {
   });
 
   final Player player;
+  final Duration bufferPosition;
   final VoidCallback onPointerActivity;
   final VoidCallback onInteractionStart;
   final VoidCallback onInteractionEnd;
@@ -388,6 +396,7 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  Duration _bufferedPosition = Duration.zero;
   double? _dragValue;
 
   @override
@@ -395,6 +404,7 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
     super.initState();
     _position = widget.player.state.position;
     _duration = widget.player.state.duration;
+    _bufferedPosition = widget.bufferPosition;
     _subscriptions.add(
       widget.player.stream.position.listen((position) {
         if (!mounted || _dragValue != null) return;
@@ -405,6 +415,12 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
       widget.player.stream.duration.listen((duration) {
         if (!mounted) return;
         setState(() => _duration = duration);
+      }),
+    );
+    _subscriptions.add(
+      widget.player.stream.buffer.listen((buffer) {
+        if (!mounted) return;
+        setState(() => _bufferedPosition = buffer);
       }),
     );
   }
@@ -424,6 +440,10 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
         _position.inMilliseconds
             .toDouble()
             .clamp(0, totalMilliseconds > 0 ? totalMilliseconds : 1);
+    final bufferedValue = _bufferedPosition.inMilliseconds
+        .toDouble()
+        .clamp(activeValue, totalMilliseconds > 0 ? totalMilliseconds : 1)
+        .toDouble();
 
     return Row(
       children: [
@@ -448,6 +468,7 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
             ),
             child: Slider(
               value: activeValue,
+              secondaryTrackValue: bufferedValue,
               min: 0,
               max: totalMilliseconds > 0 ? totalMilliseconds : 1,
               onChangeStart: (_) {
