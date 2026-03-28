@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
-import '../application/search_controller.dart';
 import '../../detail/presentation/detail_page.dart';
+import '../application/search_controller.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -15,11 +15,15 @@ class SearchPage extends ConsumerStatefulWidget {
 
 class _SearchPageState extends ConsumerState<SearchPage> {
   late final TextEditingController _controller;
+  String? _lastConsumedPendingSearch;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _consumePendingSearch(ref.read(pendingSearchProvider));
+    });
   }
 
   @override
@@ -28,17 +32,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     super.dispose();
   }
 
-  // 响应首页点击触发的跨页面搜索
-  void _onPendingSearch(String? prev, String? next) {
-    if (next == null || next.isEmpty) return;
-    _controller.text = next;
-    _search(next);
-    // 消费掉，避免重复触发
+  void _onPendingSearch(String? previous, String? next) {
+    _consumePendingSearch(next);
+  }
+
+  void _consumePendingSearch(String? keyword) {
+    if (keyword == null || keyword.trim().isEmpty) return;
+    final normalized = keyword.trim();
+    if (_lastConsumedPendingSearch == normalized) return;
+    _lastConsumedPendingSearch = normalized;
+    _controller.text = normalized;
+    _search(normalized);
     ref.read(pendingSearchProvider.notifier).state = null;
   }
 
-  void _search(String kw) {
-    final trimmed = kw.trim();
+  void _search(String keyword) {
+    final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
     ref.read(searchControllerProvider.notifier).search(trimmed);
   }
@@ -47,7 +56,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Widget build(BuildContext context) {
     ref.listen<String?>(pendingSearchProvider, _onPendingSearch);
     final state = ref.watch(searchControllerProvider);
-    final cs = Theme.of(context).colorScheme;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -56,22 +65,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       ),
       body: Column(
         children: [
-          // ── Search bar ─────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
             child: SearchBar(
               controller: _controller,
-              hintText: '搜索影视、剧集、动漫…',
+              hintText: '搜索影视、剧集、动漫',
               leading: const Icon(Icons.search_rounded),
               trailing: [
                 if (_controller.text.isNotEmpty)
                   IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(Icons.close_rounded),
                     onPressed: () {
                       _controller.clear();
                       ref
                           .read(searchControllerProvider.notifier)
                           .clearResults();
+                      setState(() {});
                     },
                   ),
               ],
@@ -79,9 +88,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onChanged: (_) => setState(() {}),
             ),
           ),
-          // ── Body ───────────────────────────────────────────
           Expanded(
-            child: _buildBody(context, state, cs),
+            child: _buildBody(context, state, colorScheme),
           ),
         ],
       ),
@@ -89,7 +97,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Widget _buildBody(
-      BuildContext context, SearchState state, ColorScheme cs) {
+    BuildContext context,
+    SearchState state,
+    ColorScheme colorScheme,
+  ) {
     if (state.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -100,11 +111,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.error_outline_rounded,
-                size: 48, color: cs.error),
+                size: 48, color: colorScheme.error),
             const SizedBox(height: 12),
-            Text(state.error!,
-                style: TextStyle(color: cs.error),
-                textAlign: TextAlign.center),
+            Text(
+              state.error!,
+              style: TextStyle(color: colorScheme.error),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () => _search(_controller.text),
@@ -127,22 +140,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
-                  ?.copyWith(color: cs.onSurfaceVariant),
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
             ),
           ),
           Expanded(
             child: GridView.builder(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-              gridDelegate:
-                  const SliverGridDelegateWithMaxCrossAxisExtent(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                 maxCrossAxisExtent: 150,
                 childAspectRatio: 0.62,
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
               ),
               itemCount: state.results.length,
-              itemBuilder: (context, i) {
-                final item = state.results[i];
+              itemBuilder: (context, index) {
+                final item = state.results[index];
                 return _VodCard(
                   item: item,
                   onTap: () => Navigator.of(context).push(
@@ -158,7 +170,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
     }
 
-    // History / idle
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       children: [
@@ -166,11 +177,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           Row(
             children: [
               Expanded(
-                child: Text('最近搜索',
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelLarge
-                        ?.copyWith(color: cs.onSurfaceVariant)),
+                child: Text(
+                  '最近搜索',
+                  style: Theme.of(context)
+                      .textTheme
+                      .labelLarge
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
               ),
               TextButton(
                 onPressed: ref
@@ -186,15 +199,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             runSpacing: 8,
             children: state.history
                 .map(
-                  (kw) => InputChip(
-                    label: Text(kw),
+                  (keyword) => InputChip(
+                    label: Text(keyword),
                     onPressed: () {
-                      _controller.text = kw;
-                      _search(kw);
+                      _controller.text = keyword;
+                      _search(keyword);
                     },
                     onDeleted: () => ref
                         .read(searchControllerProvider.notifier)
-                        .removeHistoryEntry(kw),
+                        .removeHistoryEntry(keyword),
                   ),
                 )
                 .toList(),
@@ -206,13 +219,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.movie_filter_outlined,
-                      size: 56,
-                      color: cs.onSurface.withValues(alpha: 0.2)),
+                  Icon(
+                    Icons.movie_filter_outlined,
+                    size: 56,
+                    color: colorScheme.onSurface.withValues(alpha: 0.2),
+                  ),
                   const SizedBox(height: 16),
-                  Text('输入关键词开始搜索',
-                      style: TextStyle(
-                          color: cs.onSurfaceVariant, fontSize: 15)),
+                  Text(
+                    '输入关键词开始搜索',
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 15,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -223,13 +242,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 }
 
 class _VodCard extends StatelessWidget {
-  const _VodCard({required this.item, required this.onTap});
+  const _VodCard({
+    required this.item,
+    required this.onTap,
+  });
+
   final VodItem item;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       margin: EdgeInsets.zero,
@@ -270,12 +292,10 @@ class _VodCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: cs.primary,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
-              )
-            else
-              const SizedBox(height: 6),
+              ),
           ],
         ),
       ),
@@ -285,20 +305,26 @@ class _VodCard extends StatelessWidget {
 
 class _Placeholder extends StatelessWidget {
   const _Placeholder({required this.name});
+
   final String name;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Container(
-      color: cs.surfaceContainerHighest,
+      color: colorScheme.surfaceContainerHighest,
       alignment: Alignment.center,
+      padding: const EdgeInsets.all(12),
       child: Text(
-        name.isNotEmpty ? name[0] : '?',
-        style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-            color: cs.onSurfaceVariant),
+        name,
+        textAlign: TextAlign.center,
+        maxLines: 4,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
       ),
     );
   }
