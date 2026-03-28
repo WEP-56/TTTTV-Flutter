@@ -120,12 +120,6 @@ class HomePage extends ConsumerWidget {
           floating: true,
           scrolledUnderElevation: 0,
         ),
-        const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: _HomeIntroCard(),
-          ),
-        ),
         _RecommendationSection(
           title: '动漫区',
           subtitle: 'Bangumi 高分动画榜，点击后自动跳转搜索',
@@ -358,48 +352,6 @@ class _PosterFallback extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HomeIntroCard extends StatelessWidget {
-  const _HomeIntroCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colorScheme.primaryContainer,
-            colorScheme.secondaryContainer.withValues(alpha: 0.9),
-          ],
-        ),
-      ),
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '首页推荐已改为双分区',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '动漫区来自 Bangumi，影视区来自猫眼榜单。点击任意卡片后，会自动切到搜索页并搜索对应名称。',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  height: 1.5,
-                ),
           ),
         ],
       ),

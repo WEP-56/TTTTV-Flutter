@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../domain/storage_manager.dart';
+import 'about_page.dart';
 import 'sources_page.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -238,6 +239,17 @@ class SettingsPage extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SourcesPage()),
+            ),
+          ),
+          const Divider(height: 1),
+          const _SectionHeader(title: '关于'),
+          ListTile(
+            leading: const Icon(Icons.info_outline_rounded),
+            title: const Text('关于 TTTTV'),
+            subtitle: const Text('项目说明、免责声明、License 与 GitHub 仓库'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AboutPage()),
             ),
           ),
         ],
