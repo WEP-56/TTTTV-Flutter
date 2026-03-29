@@ -142,6 +142,12 @@ final favoriteItemsProvider = FutureProvider<List<FavoriteItem>>((ref) async {
   return repository.fetchFavorites();
 });
 
+final liveFavoritesProvider =
+    FutureProvider<List<LiveFavoriteItem>>((ref) async {
+  final store = ref.watch(liveLibraryStoreProvider);
+  return store.fetchFavorites();
+});
+
 final siteListProvider = FutureProvider<List<SiteWithStatus>>((ref) async {
   final repository = ref.watch(sourcesRepositoryProvider);
   return repository.fetchSites();
