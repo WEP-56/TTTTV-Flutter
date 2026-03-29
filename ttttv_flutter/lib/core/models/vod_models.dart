@@ -128,16 +128,23 @@ class PlayEpisode {
   PlayEpisode({
     required this.name,
     required this.url,
+    this.proxyUrl,
   });
 
   final String name;
   final String url;
+  /// M3U8 链接的本地代理地址，非空时优先使用（绕过防盗链）
+  final String? proxyUrl;
+
+  /// 实际播放地址：有代理用代理，否则用原始 URL
+  String get effectiveUrl => (proxyUrl != null && proxyUrl!.isNotEmpty) ? proxyUrl! : url;
 
   factory PlayEpisode.fromJson(Object? json) {
     final map = json as Map<String, dynamic>;
     return PlayEpisode(
       name: _readString(map['name']) ?? '',
       url: _readString(map['url']) ?? '',
+      proxyUrl: _readString(map['proxy_url']),
     );
   }
 }

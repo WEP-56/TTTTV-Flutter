@@ -47,9 +47,13 @@ class _DetailPageState extends ConsumerState<DetailPage> {
           );
       PlayResult? playResult;
       if (detail.vodPlayUrl.trim().isNotEmpty) {
+        // 取站点 detail 域名作为 Referer，绕过 M3U8 防盗链
+        final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
+        final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
+        final referer = site?.baseUrl ?? '';
         playResult = await ref
             .read(playRepositoryProvider)
-            .parsePlayUrl(detail.vodPlayUrl);
+            .parsePlayUrl(detail.vodPlayUrl, referer: referer);
       }
       final isFavorited = await ref
           .read(favoritesRepositoryProvider)

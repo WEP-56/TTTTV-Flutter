@@ -21,6 +21,8 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
 
   final Set<String> _selectedRemoteKeys = <String>{};
   final Set<String> _checkingSiteKeys = <String>{};
+  final Set<String> _selectedInstalledKeys = <String>{};
+  bool _batchDeleteMode = false;
 
   bool _remoteLoading = false;
   bool _addingRemote = false;
@@ -104,6 +106,8 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
                       .where((site) => site.enabled && site.isBadHealth)
                       .length,
                   checkingSiteKeys: _checkingSiteKeys,
+                  batchDeleteMode: _batchDeleteMode,
+                  selectedInstalledKeys: _selectedInstalledKeys,
                   onAddSource: _showAddSourceDialog,
                   onCheckAllSites: () => _checkAllSites(sites),
                   onDisableBadSites: () => _disableBadSites(sites),
@@ -111,6 +115,22 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
                   onDeleteSource: _deleteSource,
                   onToggleEnabled: _toggleSite,
                   onCheckSource: _checkSite,
+                  onToggleBatchDelete: () => setState(() {
+                    _batchDeleteMode = !_batchDeleteMode;
+                    _selectedInstalledKeys.clear();
+                  }),
+                  onToggleInstalledSelection: (key, selected) => setState(() {
+                    if (selected) {
+                      _selectedInstalledKeys.add(key);
+                    } else {
+                      _selectedInstalledKeys.remove(key);
+                    }
+                  }),
+                  onSelectAllInstalled: () => setState(() {
+                    _selectedInstalledKeys.addAll(
+                        filteredSites.map((s) => s.key));
+                  }),
+                  onBatchDeleteSelected: () => _batchDeleteSelected(filteredSites),
                 ),
                 const SizedBox(height: 16),
                 _RemoteImportSection(
@@ -552,6 +572,42 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
         _showMessage('删除失败：$error');
       }
     }
+  }
+
+  Future<void> _batchDeleteSelected(List<SiteWithStatus> sites) async {
+    final keys = Set<String>.from(_selectedInstalledKeys);
+    if (keys.isEmpty) return;
+    final names = sites
+        .where((s) => keys.contains(s.key))
+        .map((s) => s.name)
+        .join('、');
+    final confirmed = await _confirmAction(
+      context,
+      title: '批量删除片源',
+      message: '确定要删除以下 ${keys.length} 个片源吗？\n$names',
+      confirmLabel: '删除',
+    );
+    if (!confirmed || !mounted) return;
+
+    var failed = 0;
+    for (final key in keys) {
+      try {
+        await ref.read(sourcesRepositoryProvider).deleteSource(key);
+      } catch (_) {
+        failed++;
+      }
+    }
+    await _refreshSites();
+    if (!mounted) return;
+    setState(() {
+      _selectedInstalledKeys.clear();
+      _batchDeleteMode = false;
+    });
+    _showMessage(
+      failed == 0
+          ? '已删除 ${keys.length} 个片源'
+          : '删除完成，${keys.length - failed} 个成功，$failed 个失败',
+    );
   }
 
   Future<void> _showSourceDetail(SiteWithStatus site) async {
@@ -1267,6 +1323,8 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
     required this.disablingBadSites,
     required this.badEnabledCount,
     required this.checkingSiteKeys,
+    required this.batchDeleteMode,
+    required this.selectedInstalledKeys,
     required this.onAddSource,
     required this.onCheckAllSites,
     required this.onDisableBadSites,
@@ -1274,6 +1332,10 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
     required this.onDeleteSource,
     required this.onToggleEnabled,
     required this.onCheckSource,
+    required this.onToggleBatchDelete,
+    required this.onToggleInstalledSelection,
+    required this.onSelectAllInstalled,
+    required this.onBatchDeleteSelected,
   });
 
   final TextEditingController filterController;
@@ -1283,6 +1345,8 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
   final bool disablingBadSites;
   final int badEnabledCount;
   final Set<String> checkingSiteKeys;
+  final bool batchDeleteMode;
+  final Set<String> selectedInstalledKeys;
   final VoidCallback onAddSource;
   final Future<void> Function() onCheckAllSites;
   final Future<void> Function() onDisableBadSites;
@@ -1291,6 +1355,10 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
   final Future<void> Function(SiteWithStatus site, bool enabled)
       onToggleEnabled;
   final Future<void> Function(SiteWithStatus site) onCheckSource;
+  final VoidCallback onToggleBatchDelete;
+  final void Function(String key, bool selected) onToggleInstalledSelection;
+  final VoidCallback onSelectAllInstalled;
+  final Future<void> Function() onBatchDeleteSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -1337,6 +1405,13 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('新增'),
                 ),
+                FilledButton.tonalIcon(
+                  onPressed: onToggleBatchDelete,
+                  icon: Icon(batchDeleteMode
+                      ? Icons.close_rounded
+                      : Icons.delete_sweep_rounded),
+                  label: Text(batchDeleteMode ? '取消批量删除' : '批量删除'),
+                ),
               ],
             ),
             const SizedBox(height: 6),
@@ -1359,15 +1434,41 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
-            Text(
-              '当前显示 ${sites.length} / $totalCount',
-              style: Theme.of(context).textTheme.bodySmall,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '当前显示 ${sites.length} / $totalCount',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (batchDeleteMode) ...[
+                  TextButton(
+                    onPressed: sites.isEmpty ? null : onSelectAllInstalled,
+                    child: const Text('全选'),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton.icon(
+                    onPressed: selectedInstalledKeys.isEmpty
+                        ? null
+                        : onBatchDeleteSelected,
+                    icon: const Icon(Icons.delete_rounded),
+                    label: Text('删除所选（${selectedInstalledKeys.length}）'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor:
+                          Theme.of(context).colorScheme.error,
+                      foregroundColor:
+                          Theme.of(context).colorScheme.onError,
+                    ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 10),
             if (sites.isEmpty)
               const _SectionHint(
                 title: '没有找到片源',
-                description: '可以清空筛选条件，或通过“新增”手动添加片源。',
+                description: '可以清空筛选条件，或通过"新增"手动添加片源。',
               )
             else
               ...sites.map(
@@ -1377,10 +1478,14 @@ class _InstalledSourcesManagerSection extends StatelessWidget {
                     site: site,
                     checking:
                         checkingAllSites || checkingSiteKeys.contains(site.key),
+                    batchDeleteMode: batchDeleteMode,
+                    selected: selectedInstalledKeys.contains(site.key),
                     onViewSource: () => onViewSource(site),
                     onDeleteSource: () => onDeleteSource(site),
                     onToggleEnabled: (value) => onToggleEnabled(site, value),
                     onCheckSource: () => onCheckSource(site),
+                    onToggleSelection: (value) =>
+                        onToggleInstalledSelection(site.key, value),
                   ),
                 ),
               ),
@@ -1395,18 +1500,24 @@ class _ManagedInstalledSourceCard extends StatelessWidget {
   const _ManagedInstalledSourceCard({
     required this.site,
     required this.checking,
+    required this.batchDeleteMode,
+    required this.selected,
     required this.onViewSource,
     required this.onDeleteSource,
     required this.onToggleEnabled,
     required this.onCheckSource,
+    required this.onToggleSelection,
   });
 
   final SiteWithStatus site;
   final bool checking;
+  final bool batchDeleteMode;
+  final bool selected;
   final Future<void> Function() onViewSource;
   final Future<void> Function() onDeleteSource;
   final ValueChanged<bool> onToggleEnabled;
   final Future<void> Function() onCheckSource;
+  final ValueChanged<bool> onToggleSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -1424,44 +1535,57 @@ class _ManagedInstalledSourceCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        site.name,
-                        style:
-                            Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                ),
+            InkWell(
+              onTap: batchDeleteMode ? () => onToggleSelection(!selected) : null,
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (batchDeleteMode)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8, top: 2),
+                      child: Checkbox(
+                        value: selected,
+                        onChanged: (v) => onToggleSelection(v ?? false),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        site.key,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
+                    ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          site.name,
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          site.key,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'view') {
-                      onViewSource();
-                    } else if (value == 'delete') {
-                      onDeleteSource();
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem<String>(value: 'view', child: Text('查看详情')),
-                    PopupMenuItem<String>(value: 'delete', child: Text('删除片源')),
-                  ],
-                ),
-              ],
+                  if (!batchDeleteMode)
+                    PopupMenuButton<String>(
+                      onSelected: (value) {
+                        if (value == 'view') {
+                          onViewSource();
+                        } else if (value == 'delete') {
+                          onDeleteSource();
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem<String>(value: 'view', child: Text('查看详情')),
+                        PopupMenuItem<String>(value: 'delete', child: Text('删除片源')),
+                      ],
+                    ),
+                ],
+              ),
             ),
             const SizedBox(height: 10),
             Text(site.baseUrl, style: Theme.of(context).textTheme.bodyMedium),

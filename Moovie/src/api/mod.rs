@@ -6,6 +6,7 @@ pub mod live;
 pub mod live_auth;
 pub mod live_favorites;
 pub mod live_history;
+pub mod media_proxy;
 pub mod play;
 pub mod search;
 pub mod sources;

@@ -302,7 +302,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WindowListener {
       _bufferPosition = Duration.zero;
     });
     try {
-      await _player.open(Media(_currentEpisode.url), play: false);
+      await _player.open(Media(_currentEpisode.effectiveUrl), play: false);
       await _player.setRate(_playbackSpeed);
       await _player.setVolume(_volume);
       if (startAtSeconds > 0) {

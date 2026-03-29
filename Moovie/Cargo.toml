@@ -34,6 +34,7 @@ directories = "6.0.0"
 brotli = "6"
 flate2 = "1"
 md-5 = "0.10"
+tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 regex = "1"
 qrcode = "0.14"

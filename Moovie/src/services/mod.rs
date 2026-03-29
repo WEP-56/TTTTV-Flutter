@@ -3,5 +3,5 @@ pub mod search_service;
 pub mod source_crawler;
 
 pub use play_parser::{PlayEpisode, PlayParser, PlayResult, PlaySource};
-pub use search_service::SearchService;
+pub use search_service::{SearchEvent, SearchService};
 pub use source_crawler::{DefaultSourceCrawler, SourceCrawler};

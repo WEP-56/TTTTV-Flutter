@@ -45,11 +45,12 @@ class HttpVodBackend
   }
 
   @override
-  Future<PlayResult> parsePlayUrl(String playUrl) {
+  Future<PlayResult> parsePlayUrl(String playUrl, {String referer = ''}) {
     return _client.getData<PlayResult>(
       '/api/play/parse',
       queryParameters: {
         'play_url': playUrl,
+        if (referer.isNotEmpty) 'referer': referer,
       },
       decoder: PlayResult.fromJson,
     );
