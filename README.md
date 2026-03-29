@@ -147,6 +147,16 @@ unner\Release\moovie.exe `
 
 ---
 
+## TODO
+- Tvbox格式配置支持
+- 影视模块观影时间记录
+- 设置功能扩充
+- 多端
+  - 安卓端
+  - mac端
+  - 电视端
+- ...
+
 ## 致谢
 
 感谢社区 [linux.do](https://linux.do/) 的支持与反馈。
