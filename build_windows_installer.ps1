@@ -2,9 +2,9 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $flutterDir = Join-Path $repoRoot 'ttttv_flutter'
-$releaseBuilder = Join-Path $repoRoot 'build_windows_flutter_release.ps1'
 $releaseDir = Join-Path $flutterDir 'build\windows\x64\runner\Release'
 $installerBuildDir = Join-Path $repoRoot 'build\installer'
+$payloadDir = Join-Path $installerBuildDir 'payload'
 $issPath = Join-Path $installerBuildDir 'ttttv_flutter.iss'
 $outputDir = Join-Path $repoRoot 'build\installers'
 $pubspecPath = Join-Path $flutterDir 'pubspec.yaml'
@@ -50,8 +50,41 @@ function Get-AppVersion {
     return $rawVersion
 }
 
-if (-not (Test-Path $releaseBuilder)) {
-    throw "Release builder script not found: $releaseBuilder"
+function Reset-Directory([string]$path) {
+    if (Test-Path $path) {
+        Remove-Item $path -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
+}
+
+function Copy-ReleasePayload {
+    param(
+        [string]$sourceDir,
+        [string]$destinationDir
+    )
+
+    $excludedNames = @(
+        '*.zip',
+        '*.msix',
+        '*.appinstaller'
+    )
+
+    Get-ChildItem -Path $sourceDir -Force | Where-Object {
+        $name = $_.Name
+        -not ($excludedNames | Where-Object { $name -like $_ })
+    } | ForEach-Object {
+        $destination = Join-Path $destinationDir $_.Name
+        if ($_.PSIsContainer) {
+            Copy-Item $_.FullName $destination -Recurse -Force
+        }
+        else {
+            Copy-Item $_.FullName $destination -Force
+        }
+    }
+}
+
+if (-not (Test-Path $flutterDir)) {
+    throw "Flutter project directory not found: $flutterDir"
 }
 
 $iscc = Get-InnoCompiler
@@ -63,8 +96,14 @@ Download: https://jrsoftware.org/isinfo.php
 "@
 }
 
-Write-Host 'Building release payload first...' -ForegroundColor Green
-& $releaseBuilder
+Write-Host 'Building Windows release with Flutter...' -ForegroundColor Green
+Push-Location $flutterDir
+try {
+    flutter build windows
+}
+finally {
+    Pop-Location
+}
 
 if (-not (Test-Path $releaseDir)) {
     throw "Release directory not found: $releaseDir"
@@ -75,11 +114,22 @@ if (-not (Test-Path $appExe)) {
     throw "Flutter executable not found: $appExe"
 }
 
+if (-not (Test-Path $iconPath)) {
+    throw "App icon not found: $iconPath"
+}
+
 $version = Get-AppVersion
 $safeVersion = ($version -replace '[^0-9A-Za-z\.\-_]+', '_')
 
 New-Item -ItemType Directory -Force -Path $installerBuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+Reset-Directory $payloadDir
+Copy-ReleasePayload -sourceDir $releaseDir -destinationDir $payloadDir
+
+$payloadExe = Join-Path $payloadDir 'ttttv_flutter.exe'
+if (-not (Test-Path $payloadExe)) {
+    throw "Payload executable not found after staging: $payloadExe"
+}
 
 $appId = '{{9C9B5EF0-9D57-46A6-AF6A-4FD6F21D9A30}'
 $appName = 'TTTTV'
@@ -112,7 +162,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "$releaseDir\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "$payloadDir\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\$appName"; Filename: "{app}\ttttv_flutter.exe"; IconFilename: "{app}\ttttv_flutter.exe"
@@ -129,5 +179,5 @@ Write-Host 'Building installer with Inno Setup...' -ForegroundColor Green
 
 Write-Host ''
 Write-Host 'Installer build complete.' -ForegroundColor Cyan
-Write-Host "Installer output:" -ForegroundColor Cyan
+Write-Host 'Installer output:' -ForegroundColor Cyan
 Write-Host "  $outputDir"
