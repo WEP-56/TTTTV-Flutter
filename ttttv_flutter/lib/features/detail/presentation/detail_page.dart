@@ -22,7 +22,9 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   PlayResult? _playResult;
   bool _loading = true;
   bool _favoriteLoading = false;
+  bool _sourceToggleLoading = false;
   bool _isFavorited = false;
+  bool _sourceEnabled = true;
   String? _error;
   int _resumeSourceIndex = 0;
   int _resumeEpisodeIndex = 0;
@@ -46,11 +48,14 @@ class _DetailPageState extends ConsumerState<DetailPage> {
             vodId: widget.initialItem.vodId,
           );
       PlayResult? playResult;
+      final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
+      final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
+      _sourceEnabled = site?.enabled ?? true;
       if (detail.vodPlayUrl.trim().isNotEmpty) {
         // 取站点 detail 域名作为 Referer，绕过 M3U8 防盗链
         final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
         final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
-        final referer = site?.baseUrl ?? '';
+        final referer = site?.detailUrl ?? site?.baseUrl ?? '';
         playResult = await ref
             .read(playRepositoryProvider)
             .parsePlayUrl(detail.vodPlayUrl, referer: referer);
@@ -100,6 +105,65 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       setState(() => _isFavorited = !_isFavorited);
     } finally {
       setState(() => _favoriteLoading = false);
+    }
+  }
+
+  Future<void> _disableCurrentSource() async {
+    if (_sourceToggleLoading || !_sourceEnabled) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('禁用此源'),
+          content: Text(
+            '禁用片源 ${_detail.sourceKey} 后，后续搜索和详情将不再默认使用它。是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('禁用'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() => _sourceToggleLoading = true);
+    try {
+      await ref.read(sourcesRepositoryProvider).toggleSite(
+            key: _detail.sourceKey,
+            enabled: false,
+          );
+      ref.invalidate(siteListProvider);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sourceEnabled = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已禁用片源 ${_detail.sourceKey}')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('禁用失败: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _sourceToggleLoading = false);
+      }
     }
   }
 
@@ -171,12 +235,15 @@ class _DetailPageState extends ConsumerState<DetailPage> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: _ActionRow(
+              child: _DetailActionRow(
                 hasPlay: _playResult != null,
                 hasResume: _resumeProgress > 0,
+                sourceEnabled: _sourceEnabled,
+                sourceToggleLoading: _sourceToggleLoading,
                 onPlay: () => _openPlayer(
                     _resumeSourceIndex, _resumeEpisodeIndex, _resumeProgress),
                 onPlayFromStart: () => _openPlayer(0, 0, 0),
+                onDisableSource: _disableCurrentSource,
               ),
             ),
           ),
@@ -254,6 +321,97 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         ),
       ],
     ];
+  }
+}
+
+class _DetailActionRow extends StatelessWidget {
+  const _DetailActionRow({
+    required this.hasPlay,
+    required this.hasResume,
+    required this.sourceEnabled,
+    required this.sourceToggleLoading,
+    required this.onPlay,
+    required this.onPlayFromStart,
+    required this.onDisableSource,
+  });
+
+  final bool hasPlay;
+  final bool hasResume;
+  final bool sourceEnabled;
+  final bool sourceToggleLoading;
+  final VoidCallback onPlay;
+  final VoidCallback onPlayFromStart;
+  final VoidCallback onDisableSource;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+
+    if (hasPlay) {
+      if (hasResume) {
+        children.add(
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onPlay,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('继续观看'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: onPlayFromStart,
+                icon: const Icon(Icons.replay_rounded),
+                label: const Text('从头播放'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        children.add(
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onPlay,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('立即播放'),
+            ),
+          ),
+        );
+      }
+    }
+
+    if (sourceEnabled) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 8));
+      }
+      children.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: sourceToggleLoading ? null : onDisableSource,
+            icon: sourceToggleLoading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.block_rounded, size: 18),
+            label: Text(sourceToggleLoading ? '禁用中...' : '禁用此源'),
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
   }
 }
 
@@ -455,6 +613,7 @@ class _Tag extends StatelessWidget {
 
 // ─── Action row ───────────────────────────────────────────────────────────────
 
+// ignore: unused_element
 class _ActionRow extends StatelessWidget {
   const _ActionRow({
     required this.hasPlay,

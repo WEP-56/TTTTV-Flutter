@@ -201,72 +201,18 @@ class _RailBottomButton extends StatelessWidget {
   }
 }
 
-class _ShellContent extends ConsumerWidget {
+class _ShellContent extends StatelessWidget {
   const _ShellContent({required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final healthAsync = ref.watch(backendHealthProvider);
-
-    final banner = healthAsync.when(
-      loading: () => const LinearProgressIndicator(minHeight: 2),
-      error: (e, _) => _HealthBanner(
-        message: e.toString(),
-        onRetry: () => ref.invalidate(backendHealthProvider),
-      ),
-      data: (v) => v.isOk
-          ? const SizedBox.shrink()
-          : _HealthBanner(
-              message: 'Backend status: ${v.status}',
-              onRetry: () => ref.invalidate(backendHealthProvider),
-            ),
-    );
 
     return Material(
       color: colorScheme.surface,
-      child: Column(
-        children: [
-          banner,
-          Expanded(child: child),
-        ],
-      ),
-    );
-  }
-}
-
-class _HealthBanner extends StatelessWidget {
-  const _HealthBanner({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Material(
-      color: cs.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Icon(Icons.cloud_off_rounded, size: 18, color: cs.onErrorContainer),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '后端不可用: $message',
-                style: TextStyle(color: cs.onErrorContainer, fontSize: 13),
-              ),
-            ),
-            TextButton(
-              onPressed: onRetry,
-              child: const Text('重试'),
-            ),
-          ],
-        ),
-      ),
+      child: child,
     );
   }
 }

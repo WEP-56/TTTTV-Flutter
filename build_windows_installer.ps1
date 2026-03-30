@@ -71,12 +71,8 @@ if (-not (Test-Path $releaseDir)) {
 }
 
 $appExe = Join-Path $releaseDir 'ttttv_flutter.exe'
-$backendExe = Join-Path $releaseDir 'moovie.exe'
 if (-not (Test-Path $appExe)) {
     throw "Flutter executable not found: $appExe"
-}
-if (-not (Test-Path $backendExe)) {
-    throw "Bundled backend executable not found: $backendExe"
 }
 
 $version = Get-AppVersion

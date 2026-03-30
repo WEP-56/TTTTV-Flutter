@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
-import 'core/backend/managed_backend.dart';
 
 const _windowWidthKey = 'window_width';
 const _windowHeightKey = 'window_height';
@@ -16,7 +15,6 @@ const _minimumWindowSize = Size(900, 600);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await ManagedBackend.instance.ensureStarted();
   MediaKit.ensureInitialized();
   await windowManager.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
@@ -35,7 +33,7 @@ void main() async {
     ProviderScope(
       child: _WindowPersistenceScope(
         preferences: preferences,
-        child: const _BackendLifecycleScope(child: TtttvApp()),
+        child: const TtttvApp(),
       ),
     ),
   );
@@ -155,30 +153,6 @@ class _WindowPersistenceScopeState extends State<_WindowPersistenceScope>
 
     await widget.preferences.setDouble(_windowWidthKey, size.width);
     await widget.preferences.setDouble(_windowHeightKey, size.height);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return widget.child;
-  }
-}
-
-class _BackendLifecycleScope extends StatefulWidget {
-  const _BackendLifecycleScope({
-    required this.child,
-  });
-
-  final Widget child;
-
-  @override
-  State<_BackendLifecycleScope> createState() => _BackendLifecycleScopeState();
-}
-
-class _BackendLifecycleScopeState extends State<_BackendLifecycleScope> {
-  @override
-  void dispose() {
-    unawaited(ManagedBackend.instance.dispose());
-    super.dispose();
   }
 
   @override

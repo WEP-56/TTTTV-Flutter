@@ -129,15 +129,19 @@ class PlayEpisode {
     required this.name,
     required this.url,
     this.proxyUrl,
+    this.httpHeaders,
   });
 
   final String name;
   final String url;
+  final Map<String, String>? httpHeaders;
+
   /// M3U8 链接的本地代理地址，非空时优先使用（绕过防盗链）
   final String? proxyUrl;
 
   /// 实际播放地址：有代理用代理，否则用原始 URL
-  String get effectiveUrl => (proxyUrl != null && proxyUrl!.isNotEmpty) ? proxyUrl! : url;
+  String get effectiveUrl =>
+      (proxyUrl != null && proxyUrl!.isNotEmpty) ? proxyUrl! : url;
 
   factory PlayEpisode.fromJson(Object? json) {
     final map = json as Map<String, dynamic>;
@@ -145,6 +149,7 @@ class PlayEpisode {
       name: _readString(map['name']) ?? '',
       url: _readString(map['url']) ?? '',
       proxyUrl: _readString(map['proxy_url']),
+      httpHeaders: _readStringMap(map['http_headers']),
     );
   }
 }
@@ -292,6 +297,7 @@ class SiteWithStatus {
     required this.key,
     required this.name,
     required this.baseUrl,
+    this.detailUrl,
     required this.enabled,
     this.lastCheck,
     this.isHealthy,
@@ -306,6 +312,7 @@ class SiteWithStatus {
   final String key;
   final String name;
   final String baseUrl;
+  final String? detailUrl;
   final bool enabled;
   final int? lastCheck;
   final bool? isHealthy;
@@ -337,6 +344,7 @@ class SiteWithStatus {
       key: _readString(map['key']) ?? '',
       name: _readString(map['name']) ?? '',
       baseUrl: _readString(map['base_url']) ?? '',
+      detailUrl: _readString(map['detail_url']) ?? _readString(map['detail']),
       enabled: map['enabled'] as bool? ?? false,
       lastCheck: _readInt(map['last_check']),
       isHealthy: map['is_healthy'] as bool?,
@@ -897,4 +905,20 @@ double? _readDouble(Object? value) {
     return value.toDouble();
   }
   return double.tryParse(value?.toString() ?? '');
+}
+
+Map<String, String>? _readStringMap(Object? value) {
+  if (value is! Map) {
+    return null;
+  }
+  final result = <String, String>{};
+  for (final entry in value.entries) {
+    final key = _readString(entry.key);
+    final item = _readString(entry.value);
+    if (key == null || item == null) {
+      continue;
+    }
+    result[key] = item;
+  }
+  return result.isEmpty ? null : result;
 }

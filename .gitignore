@@ -23,7 +23,6 @@
 *.sqlite3
 storage/
 *.json.data
-Moovie/data
 
 # IDE
 .vscode/
