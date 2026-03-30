@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/network_permission_guide.dart';
 import '../../../core/providers.dart';
 
 final _homeDioProvider = Provider<Dio>((ref) {
@@ -180,8 +181,12 @@ class _RecommendationSection extends ConsumerWidget {
       error: (error, _) => SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-          child:
-              _SectionError(title: title, subtitle: subtitle, error: '$error'),
+          child: _SectionError(
+            title: title,
+            subtitle: subtitle,
+            error: '$error',
+            showNetworkGuide: looksLikeNetworkPermissionIssue(error),
+          ),
         ),
       ),
       data: (items) => SliverMainAxisGroup(
@@ -411,11 +416,13 @@ class _SectionError extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.error,
+    required this.showNetworkGuide,
   });
 
   final String title;
   final String subtitle;
   final String error;
+  final bool showNetworkGuide;
 
   @override
   Widget build(BuildContext context) {
@@ -436,6 +443,17 @@ class _SectionError extends StatelessWidget {
               error,
               style: TextStyle(color: colorScheme.error),
             ),
+            if (showNetworkGuide) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => showNetworkPermissionGuideDialog(context),
+                  icon: const Icon(Icons.settings_rounded),
+                  label: const Text('检查联网权限'),
+                ),
+              ),
+            ],
           ],
         ),
       ),

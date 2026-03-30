@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/models/vod_models.dart';
+import '../../settings/domain/app_settings.dart';
 import '../core/providers/live_provider.dart';
 import '../core/providers/live_provider_registry.dart';
 import '../data/storage/live_library_store.dart';
@@ -95,12 +96,16 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
     this._libraryStore,
     this._providerId,
     this._roomId,
-  ) : super(LiveRoomState());
+    this._qualityPreference,
+    this._defaultDanmakuEnabled,
+  ) : super(LiveRoomState(danmakuEnabled: _defaultDanmakuEnabled));
 
   final LiveProviderRegistry _registry;
   final LiveLibraryStore _libraryStore;
   final String _providerId;
   final String _roomId;
+  final LiveQualityPreference _qualityPreference;
+  final bool _defaultDanmakuEnabled;
   final StreamController<LiveMessage> _danmakuController =
       StreamController<LiveMessage>.broadcast();
 
@@ -127,21 +132,22 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
 
       final qualities = results[0] as List<LivePlayQuality>;
       final isFavorite = results[1] as bool;
-      qualities.sort((left, right) => left.sort.compareTo(right.sort));
+      final normalizedQualities = qualities.toList()
+        ..sort((left, right) => right.sort.compareTo(left.sort));
 
       if (!mounted) return;
 
       state = state.copyWith(
         detail: detail,
-        qualities: qualities,
+        qualities: normalizedQualities,
         isFavorite: isFavorite,
         supportsDanmaku: provider.supportsDanmaku,
         loading: false,
         error: null,
       );
 
-      if (qualities.isNotEmpty) {
-        await selectQuality(qualities.first.id);
+      if (normalizedQualities.isNotEmpty) {
+        await _selectInitialQuality(normalizedQualities);
       }
 
       _syncDanmakuConnection();
@@ -154,8 +160,31 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
   }
 
   Future<void> selectQuality(String qualityId) async {
+    await _selectQualityInternal(qualityId);
+  }
+
+  Future<void> _selectInitialQuality(List<LivePlayQuality> qualities) async {
+    switch (_qualityPreference) {
+      case LiveQualityPreference.lowest:
+        await _selectQualityInternal(qualities.last.id);
+        return;
+      case LiveQualityPreference.autoDegrade:
+        for (final quality in qualities) {
+          final success = await _selectQualityInternal(quality.id);
+          if (success) {
+            return;
+          }
+        }
+        return;
+      case LiveQualityPreference.highest:
+        await _selectQualityInternal(qualities.first.id);
+        return;
+    }
+  }
+
+  Future<bool> _selectQualityInternal(String qualityId) async {
     final detail = state.detail;
-    if (detail == null) return;
+    if (detail == null) return false;
 
     state = state.copyWith(
       selectedQualityId: qualityId,
@@ -166,11 +195,13 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
 
     try {
       final playUrl = await _provider.getPlayUrl(detail, qualityId);
-      if (!mounted) return;
+      if (!mounted) return false;
       state = state.copyWith(playUrl: playUrl, loading: false, error: null);
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       state = state.copyWith(loading: false, error: error.toString());
+      return false;
     }
   }
 
@@ -186,7 +217,23 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
       await init();
       return;
     }
-    await selectQuality(qualityId);
+
+    if (_qualityPreference != LiveQualityPreference.autoDegrade) {
+      await selectQuality(qualityId);
+      return;
+    }
+
+    final startIndex = state.qualities.indexWhere((item) => item.id == qualityId);
+    final candidates = startIndex >= 0
+        ? state.qualities.sublist(startIndex)
+        : state.qualities;
+
+    for (final quality in candidates) {
+      final success = await _selectQualityInternal(quality.id);
+      if (success) {
+        return;
+      }
+    }
   }
 
   Future<void> toggleFavorite() async {
@@ -270,7 +317,7 @@ class LiveRoomController extends StateNotifier<LiveRoomState> {
       if (!mounted) return;
 
       state = state.copyWith(
-        danmakuEnabled: json['enabled'] as bool? ?? true,
+        danmakuEnabled: json['enabled'] as bool? ?? _defaultDanmakuEnabled,
         danmakuOpacity:
             (json['opacity'] as num?)?.toDouble().clamp(0.1, 1.0) ?? 0.85,
         danmakuFontSize:

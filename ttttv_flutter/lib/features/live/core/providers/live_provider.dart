@@ -61,6 +61,22 @@ class LiveProviderDescriptor {
   final bool supportsAuth;
 }
 
+enum LiveAuthCheckStatus {
+  success,
+  warning,
+  failure,
+}
+
+class LiveAuthCheckResult {
+  const LiveAuthCheckResult({
+    required this.status,
+    required this.message,
+  });
+
+  final LiveAuthCheckStatus status;
+  final String message;
+}
+
 abstract class LiveProvider {
   String get id;
   String get name;
@@ -117,12 +133,29 @@ abstract class LiveProvider {
 
   Future<bool> isAuthenticated() async => false;
 
+  Future<String> getSavedCookie() {
+    throw UnsupportedError('$name does not support cookie auth.');
+  }
+
   Future<void> saveCookie(String cookie) {
     throw UnsupportedError('$name does not support cookie auth.');
   }
 
   Future<void> clearAuth() {
     throw UnsupportedError('$name does not support auth clearing.');
+  }
+
+  Future<LiveAuthCheckResult> checkAuth() async {
+    if (!(await isAuthenticated())) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: '未保存 Cookie',
+      );
+    }
+    return const LiveAuthCheckResult(
+      status: LiveAuthCheckStatus.warning,
+      message: '已保存 Cookie，但当前平台未实现校验接口。',
+    );
   }
 
   Future<void> refreshSources() async {}

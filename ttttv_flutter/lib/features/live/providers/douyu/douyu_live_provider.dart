@@ -48,6 +48,11 @@ class DouyuLiveProvider extends LiveProvider {
   }
 
   @override
+  Future<String> getSavedCookie() {
+    return _authService.getCookie();
+  }
+
+  @override
   Future<void> saveCookie(String cookie) {
     return _authService.saveCookie(cookie);
   }
@@ -55,6 +60,34 @@ class DouyuLiveProvider extends LiveProvider {
   @override
   Future<void> clearAuth() {
     return _authService.clearCookie();
+  }
+
+  @override
+  Future<LiveAuthCheckResult> checkAuth() async {
+    final cookie = await _authService.getCookie();
+    if (cookie.trim().isEmpty) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: '未保存 Cookie',
+      );
+    }
+
+    final normalized = cookie.toLowerCase();
+    final hasUid = normalized.contains('acf_uid=');
+    final hasUserName = normalized.contains('acf_username=');
+    final hasLtkid = normalized.contains('acf_ltkid=');
+
+    if (hasUid && (hasUserName || hasLtkid)) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.warning,
+        message: '基础检查通过，已包含斗鱼登录关键字段；当前未接入强校验接口。',
+      );
+    }
+
+    return const LiveAuthCheckResult(
+      status: LiveAuthCheckStatus.failure,
+      message: 'Cookie 缺少关键字段，可能不是完整的斗鱼登录 Cookie。',
+    );
   }
 
   @override

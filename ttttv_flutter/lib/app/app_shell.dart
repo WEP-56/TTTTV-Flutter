@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
 
+import '../core/platform/platform_window.dart';
 import '../core/providers.dart';
 import '../features/home/presentation/home_page.dart';
 import '../features/live/presentation/live_page.dart';
@@ -29,8 +31,11 @@ class AppShell extends ConsumerStatefulWidget {
   ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends ConsumerState<AppShell> {
+class _AppShellState extends ConsumerState<AppShell>
+    with WidgetsBindingObserver {
   _Section _current = _Section.home;
+  bool _startupMaintenanceRan = false;
+  bool _exitMaintenanceTriggered = false;
 
   static const _pages = <Widget>[
     HomePage(),
@@ -43,12 +48,65 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void initState() {
     super.initState();
-    // listen happens in build via ref.listen
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_runStartupMaintenance());
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_runExitMaintenance());
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      unawaited(_runExitMaintenance());
+    }
+  }
+
+  Future<void> _runStartupMaintenance() async {
+    if (_startupMaintenanceRan) {
+      return;
+    }
+    _startupMaintenanceRan = true;
+
+    final settings = await ref.read(appSettingsStoreProvider).load();
+
+    if (settings.autoClearCacheThresholdBytes case final threshold?) {
+      final storageManager = ref.read(storageManagerProvider);
+      final usage = await storageManager.getCacheUsage();
+      if (usage.totalBytes >= threshold) {
+        await storageManager.clearCache();
+        ref.invalidate(cacheUsageProvider);
+      }
+    }
+
+    if (settings.autoCheckSourceHealthOnLaunch) {
+      await ref.read(sourcesRepositoryProvider).checkSites();
+      ref.invalidate(siteListProvider);
+    }
+  }
+
+  Future<void> _runExitMaintenance() async {
+    if (_exitMaintenanceTriggered) {
+      return;
+    }
+
+    final settings = await ref.read(appSettingsStoreProvider).load();
+    if (!settings.autoClearCacheOnExit) {
+      return;
+    }
+
+    _exitMaintenanceTriggered = true;
+    await ref.read(storageManagerProvider).clearCache();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 监听首页点击触发搜索
     ref.listen<String?>(pendingSearchProvider, (_, next) {
       if (next != null) {
         setState(() => _current = _Section.search);
@@ -56,20 +114,27 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
 
     final index = _Section.values.indexOf(_current);
-    final colorScheme = Theme.of(context).colorScheme;
 
+    if (!isDesktopPlatform) {
+      return _MobileShell(
+        current: _current,
+        onSelect: (section) => setState(() => _current = section),
+        child: _pages[index],
+      );
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: colorScheme.surfaceContainerLowest,
       body: Column(
         children: [
-          // 自定义标题栏（可拖动 + 窗口控制）
           _TitleBar(colorScheme: colorScheme),
           Expanded(
             child: Row(
               children: [
                 _SideRail(
                   current: _current,
-                  onSelect: (s) => setState(() => _current = s),
+                  onSelect: (section) => setState(() => _current = section),
                 ),
                 Expanded(
                   child: ClipRRect(
@@ -91,6 +156,44 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 }
 
+class _MobileShell extends StatelessWidget {
+  const _MobileShell({
+    required this.current,
+    required this.onSelect,
+    required this.child,
+  });
+
+  final _Section current;
+  final ValueChanged<_Section> onSelect;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      body: SafeArea(
+        top: false,
+        child: _ShellContent(child: child),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _Section.values.indexOf(current),
+        onDestinationSelected: (index) => onSelect(_Section.values[index]),
+        destinations: _Section.values
+            .map(
+              (section) => NavigationDestination(
+                icon: Icon(section.icon),
+                selectedIcon: Icon(section.selectedIcon),
+                label: section.label,
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
 class _SideRail extends StatelessWidget {
   const _SideRail({required this.current, required this.onSelect});
 
@@ -101,7 +204,7 @@ class _SideRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final mainSections =
-        _Section.values.where((s) => s != _Section.settings).toList();
+        _Section.values.where((section) => section != _Section.settings).toList();
     final selectedIndex =
         current == _Section.settings ? null : mainSections.indexOf(current);
 
@@ -132,14 +235,14 @@ class _SideRail extends StatelessWidget {
       ),
       destinations: mainSections
           .map(
-            (s) => NavigationRailDestination(
-              icon: Icon(s.icon),
-              selectedIcon: Icon(s.selectedIcon),
-              label: Text(s.label),
+            (section) => NavigationRailDestination(
+              icon: Icon(section.icon),
+              selectedIcon: Icon(section.selectedIcon),
+              label: Text(section.label),
             ),
           )
           .toList(),
-      onDestinationSelected: (i) => onSelect(mainSections[i]),
+      onDestinationSelected: (index) => onSelect(mainSections[index]),
     );
   }
 }
@@ -208,26 +311,23 @@ class _ShellContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Material(
-      color: colorScheme.surface,
+      color: Theme.of(context).colorScheme.surface,
       child: child,
     );
   }
 }
 
-// ─── 自定义标题栏 ─────────────────────────────────────────────────────────────
-
 class _TitleBar extends StatelessWidget {
   const _TitleBar({required this.colorScheme});
+
   final ColorScheme colorScheme;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onPanStart: (_) => windowManager.startDragging(),
+      onPanStart: (_) => startPlatformWindowDrag(),
       child: Container(
         height: 36,
         color: colorScheme.surfaceContainerLowest,
@@ -244,26 +344,17 @@ class _TitleBar extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            // 最小化
             _WinBtn(
               icon: Icons.remove_rounded,
-              onTap: () => windowManager.minimize(),
+              onTap: () => minimizePlatformWindow(),
             ),
-            // 最大化/还原
             _WinBtn(
               icon: Icons.crop_square_rounded,
-              onTap: () async {
-                if (await windowManager.isMaximized()) {
-                  windowManager.unmaximize();
-                } else {
-                  windowManager.maximize();
-                }
-              },
+              onTap: () => togglePlatformMaximize(),
             ),
-            // 关闭
             _WinBtn(
               icon: Icons.close_rounded,
-              onTap: () => windowManager.close(),
+              onTap: () => closePlatformWindow(),
               isClose: true,
             ),
             const SizedBox(width: 4),
@@ -275,8 +366,12 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _WinBtn extends StatefulWidget {
-  const _WinBtn(
-      {required this.icon, required this.onTap, this.isClose = false});
+  const _WinBtn({
+    required this.icon,
+    required this.onTap,
+    this.isClose = false,
+  });
+
   final IconData icon;
   final VoidCallback onTap;
   final bool isClose;
@@ -290,7 +385,8 @@ class _WinBtnState extends State<_WinBtn> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -303,15 +399,16 @@ class _WinBtnState extends State<_WinBtn> {
           decoration: BoxDecoration(
             color: _hovered
                 ? (widget.isClose
-                    ? cs.error
-                    : cs.onSurface.withValues(alpha: 0.08))
+                    ? colorScheme.error
+                    : colorScheme.onSurface.withValues(alpha: 0.08))
                 : Colors.transparent,
           ),
           child: Icon(
             widget.icon,
             size: 16,
-            color:
-                _hovered && widget.isClose ? cs.onError : cs.onSurfaceVariant,
+            color: _hovered && widget.isClose
+                ? colorScheme.onError
+                : colorScheme.onSurfaceVariant,
           ),
         ),
       ),

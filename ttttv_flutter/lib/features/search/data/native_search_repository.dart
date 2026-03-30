@@ -1,4 +1,5 @@
 import '../../../core/models/vod_models.dart';
+import '../../settings/data/local_app_settings_store.dart';
 import '../../settings/data/local_sources_store.dart';
 import '../domain/search_repository.dart';
 import 'native_source_crawler.dart';
@@ -6,11 +7,14 @@ import 'native_source_crawler.dart';
 class NativeSearchRepository implements SearchRepository {
   NativeSearchRepository({
     required LocalSourcesStore sourcesStore,
+    required LocalAppSettingsStore appSettingsStore,
     required NativeSourceCrawler crawler,
   })  : _sourcesStore = sourcesStore,
+        _appSettingsStore = appSettingsStore,
         _crawler = crawler;
 
   final LocalSourcesStore _sourcesStore;
+  final LocalAppSettingsStore _appSettingsStore;
   final NativeSourceCrawler _crawler;
 
   @override
@@ -20,7 +24,16 @@ class NativeSearchRepository implements SearchRepository {
       return SearchResult(items: const [], filteredCount: 0);
     }
 
-    final sources = await _sourcesStore.loadEnabledSources();
+    final settings = await _appSettingsStore.load();
+    final sources = (await _sourcesStore.loadAllSources()).where((source) {
+      if (!source.enabled) {
+        return false;
+      }
+      if (settings.autoSkipBadSources && source.isBadHealth) {
+        return false;
+      }
+      return true;
+    }).toList(growable: false);
     if (sources.isEmpty) {
       return SearchResult(items: const [], filteredCount: 0);
     }

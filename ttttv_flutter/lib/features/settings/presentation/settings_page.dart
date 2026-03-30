@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/network_permission_guide.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../domain/storage_manager.dart';
 import 'about_page.dart';
+import 'live_cookie_management_page.dart';
 import 'sources_page.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -115,6 +117,8 @@ class SettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final themeState = ref.watch(themeProvider);
+    final appSettings = ref.watch(appSettingsProvider);
+    final appSettingsNotifier = ref.read(appSettingsProvider.notifier);
     final currentSeed = themeState.seedColor;
     final currentThemeMode = themeState.themeMode;
     final cacheUsageAsync = ref.watch(cacheUsageProvider);
@@ -216,7 +220,188 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           const Divider(height: 1),
+          const _SectionHeader(title: '播放'),
+          _SettingsGroup(
+            children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.history_toggle_off_rounded),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.autoSavePlaybackProgress,
+                onChanged: appSettingsNotifier.setAutoSavePlaybackProgress,
+                title: const Text('自动保存播放进度'),
+                subtitle: const Text('默认开启。播放时间过短时可在播放器侧忽略保存。'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.fit_screen_rounded),
+                title: const Text('默认画面比例'),
+                subtitle: Text(
+                  _videoFitPreferenceLabel(appSettings.defaultVideoFit),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: SegmentedButton<VideoFitPreference>(
+                  segments: const [
+                    ButtonSegment<VideoFitPreference>(
+                      value: VideoFitPreference.original,
+                      label: Text('原比例'),
+                    ),
+                    ButtonSegment<VideoFitPreference>(
+                      value: VideoFitPreference.cover,
+                      label: Text('铺满'),
+                    ),
+                    ButtonSegment<VideoFitPreference>(
+                      value: VideoFitPreference.stretch,
+                      label: Text('拉伸'),
+                    ),
+                  ],
+                  selected: <VideoFitPreference>{appSettings.defaultVideoFit},
+                  onSelectionChanged: (selection) {
+                    appSettingsNotifier.setDefaultVideoFit(selection.first);
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.screen_lock_portrait_rounded),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.keepScreenAwakeDuringPlayback,
+                onChanged: appSettingsNotifier.setKeepScreenAwakeDuringPlayback,
+                title: const Text('播放时保持屏幕常亮'),
+                subtitle: const Text('适合长时间观看，退出播放器后应恢复系统默认行为。'),
+              ),
+            ],
+          ),
+          const Divider(height: 1),
+          const _SectionHeader(title: '直播'),
+          _SettingsGroup(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.high_quality_rounded),
+                title: const Text('默认直播清晰度'),
+                subtitle: Text(
+                  _liveQualityPreferenceLabel(
+                      appSettings.liveQualityPreference),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: SegmentedButton<LiveQualityPreference>(
+                  segments: const [
+                    ButtonSegment<LiveQualityPreference>(
+                      value: LiveQualityPreference.highest,
+                      label: Text('最高'),
+                    ),
+                    ButtonSegment<LiveQualityPreference>(
+                      value: LiveQualityPreference.lowest,
+                      label: Text('最低'),
+                    ),
+                    ButtonSegment<LiveQualityPreference>(
+                      value: LiveQualityPreference.autoDegrade,
+                      label: Text('自动降级'),
+                    ),
+                  ],
+                  selected: <LiveQualityPreference>{
+                    appSettings.liveQualityPreference,
+                  },
+                  onSelectionChanged: (selection) {
+                    appSettingsNotifier
+                        .setLiveQualityPreference(selection.first);
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.chat_bubble_outline_rounded),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.liveDanmakuEnabled,
+                onChanged: appSettingsNotifier.setLiveDanmakuEnabled,
+                title: const Text('默认开启弹幕'),
+                subtitle: const Text('进入支持弹幕的直播间时，按该设置决定初始显示状态。'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.cookie_outlined),
+                title: const Text('直播登录 Cookie 管理'),
+                subtitle: const Text('查看状态、手动粘贴、清除和检查 Cookie 有效性。'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const LiveCookieManagementPage(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 1),
+          const _SectionHeader(title: '片源策略'),
+          _SettingsGroup(
+            children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.health_and_safety_outlined),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.autoCheckSourceHealthOnLaunch,
+                onChanged: appSettingsNotifier.setAutoCheckSourceHealthOnLaunch,
+                title: const Text('启动时自动检查片源健康度'),
+                subtitle: const Text('适合经常切换片源的场景，但会带来额外网络请求。'),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.skip_next_rounded),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.autoSkipBadSources,
+                onChanged: appSettingsNotifier.setAutoSkipBadSources,
+                title: const Text('片源健康异常时自动跳过'),
+                subtitle: const Text('仅建议作用于自动选择流程，不覆盖用户手动指定。'),
+              ),
+            ],
+          ),
+          const Divider(height: 1),
           const _SectionHeader(title: '存储管理'),
+          _SettingsGroup(
+            children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.auto_delete_rounded),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                value: appSettings.autoClearCacheOnExit,
+                onChanged: appSettingsNotifier.setAutoClearCacheOnExit,
+                title: const Text('退出应用时自动清理缓存'),
+                subtitle: const Text('只清理临时缓存，不影响收藏、历史、片源和主题设置。'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.storage_rounded),
+                title: const Text('缓存达到阈值自动清理'),
+                subtitle: Text(
+                  _cacheThresholdLabel(appSettings.autoClearCacheThreshold),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: DropdownButtonFormField<CacheAutoClearThreshold>(
+                  initialValue: appSettings.autoClearCacheThreshold,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: '自动清理阈值',
+                  ),
+                  items: CacheAutoClearThreshold.values
+                      .map(
+                        (threshold) =>
+                            DropdownMenuItem<CacheAutoClearThreshold>(
+                          value: threshold,
+                          child: Text(_cacheThresholdOptionLabel(threshold)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    appSettingsNotifier.setAutoClearCacheThreshold(value);
+                  },
+                ),
+              ),
+            ],
+          ),
           ListTile(
             leading: const Icon(Icons.cleaning_services_rounded),
             title: const Text('清理缓存'),
@@ -229,6 +414,16 @@ class SettingsPage extends ConsumerWidget {
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showClearCacheDialog(context, ref),
+          ),
+          const Divider(height: 1),
+          const _SectionHeader(title: '联网'),
+          ListTile(
+            leading: const Icon(Icons.wifi_tethering_rounded),
+            title: const Text('联网权限与诊断'),
+            subtitle:
+                const Text('当新设备上出现无法联网、Failed host lookup 等情况时，前往系统设置检查联网限制'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showNetworkPermissionGuideDialog(context),
           ),
           const Divider(height: 1),
           const _SectionHeader(title: '片源'),
@@ -274,6 +469,54 @@ String _formatBytes(int bytes) {
   return '${value.toStringAsFixed(digits)} ${units[index]}';
 }
 
+String _videoFitPreferenceLabel(VideoFitPreference preference) {
+  switch (preference) {
+    case VideoFitPreference.cover:
+      return '铺满';
+    case VideoFitPreference.stretch:
+      return '拉伸';
+    case VideoFitPreference.original:
+      return '原比例';
+  }
+}
+
+String _liveQualityPreferenceLabel(LiveQualityPreference preference) {
+  switch (preference) {
+    case LiveQualityPreference.lowest:
+      return '最低，优先节省带宽';
+    case LiveQualityPreference.autoDegrade:
+      return '自动降级，优先保证可播放';
+    case LiveQualityPreference.highest:
+      return '最高，优先更高质量';
+  }
+}
+
+String _cacheThresholdLabel(CacheAutoClearThreshold threshold) {
+  switch (threshold) {
+    case CacheAutoClearThreshold.mb500:
+      return '达到 500 MB 时自动清理';
+    case CacheAutoClearThreshold.gb1:
+      return '达到 1 GB 时自动清理';
+    case CacheAutoClearThreshold.gb2:
+      return '达到 2 GB 时自动清理';
+    case CacheAutoClearThreshold.disabled:
+      return '关闭';
+  }
+}
+
+String _cacheThresholdOptionLabel(CacheAutoClearThreshold threshold) {
+  switch (threshold) {
+    case CacheAutoClearThreshold.mb500:
+      return '500 MB';
+    case CacheAutoClearThreshold.gb1:
+      return '1 GB';
+    case CacheAutoClearThreshold.gb2:
+      return '2 GB';
+    case CacheAutoClearThreshold.disabled:
+      return '关闭';
+  }
+}
+
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title});
 
@@ -289,6 +532,23 @@ class _SectionHeader extends StatelessWidget {
               color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.w700,
             ),
+      ),
+    );
+  }
+}
+
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: children,
       ),
     );
   }

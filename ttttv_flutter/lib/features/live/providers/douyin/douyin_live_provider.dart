@@ -50,6 +50,11 @@ class DouyinLiveProvider extends LiveProvider {
   }
 
   @override
+  Future<String> getSavedCookie() {
+    return _authService.getCookie();
+  }
+
+  @override
   Future<void> saveCookie(String cookie) {
     return _authService.saveCookie(cookie);
   }
@@ -57,6 +62,36 @@ class DouyinLiveProvider extends LiveProvider {
   @override
   Future<void> clearAuth() {
     return _authService.clearCookie();
+  }
+
+  @override
+  Future<LiveAuthCheckResult> checkAuth() async {
+    final cookie = await _authService.getCookie();
+    if (cookie.trim().isEmpty) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: '未保存 Cookie',
+      );
+    }
+
+    final normalized = cookie.toLowerCase();
+    final hasTtwid = normalized.contains('ttwid=');
+    final hasNonce = normalized.contains('__ac_nonce=');
+    final hasMsToken = normalized.contains('mstoken=');
+    final matchedCount =
+        [hasTtwid, hasNonce, hasMsToken].where((item) => item).length;
+
+    if (matchedCount >= 2) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.warning,
+        message: '基础检查通过，已包含抖音请求关键字段；当前未接入强校验接口。',
+      );
+    }
+
+    return const LiveAuthCheckResult(
+      status: LiveAuthCheckStatus.failure,
+      message: 'Cookie 缺少关键字段，可能无法正常请求。',
+    );
   }
 
   @override

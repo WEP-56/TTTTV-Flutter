@@ -2,9 +2,9 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
+import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
 import '../../player/presentation/player_page.dart';
 
@@ -439,11 +439,19 @@ class _DetailSliverAppBar extends StatelessWidget {
       expandedHeight: 280,
       pinned: true,
       scrolledUnderElevation: 0,
-      title: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onPanStart: (_) => Future.microtask(windowManager.startDragging),
-        child: const SizedBox(width: double.infinity, height: kToolbarHeight),
-      ),
+      title: isDesktopPlatform
+          ? GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanStart: (_) =>
+                  Future<void>.microtask(startPlatformWindowDrag),
+              child:
+                  const SizedBox(width: double.infinity, height: kToolbarHeight),
+            )
+          : Text(
+              detail.vodName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
       actions: [
         favoriteLoading
             ? const Padding(

@@ -47,6 +47,11 @@ class BilibiliLiveProvider extends LiveProvider {
   }
 
   @override
+  Future<String> getSavedCookie() {
+    return _authService.getCookie();
+  }
+
+  @override
   Future<void> saveCookie(String cookie) {
     return _authService.saveCookie(cookie);
   }
@@ -54,6 +59,43 @@ class BilibiliLiveProvider extends LiveProvider {
   @override
   Future<void> clearAuth() {
     return _authService.clearCookie();
+  }
+
+  @override
+  Future<LiveAuthCheckResult> checkAuth() async {
+    final cookie = await _authService.getCookie();
+    if (cookie.trim().isEmpty) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: '未保存 Cookie',
+      );
+    }
+
+    try {
+      final response = await _dio.get<Object?>(
+        'https://api.bilibili.com/x/web-interface/nav',
+        options: Options(headers: await _signer.headers()),
+      );
+      final json = response.data as Map<String, dynamic>? ?? const {};
+      final data = json['data'] as Map<String, dynamic>? ?? const {};
+      final isLogin = data['isLogin'] == true;
+      final uname = data['uname']?.toString().trim() ?? '';
+      if (isLogin) {
+        return LiveAuthCheckResult(
+          status: LiveAuthCheckStatus.success,
+          message: uname.isEmpty ? 'Cookie 校验成功' : 'Cookie 校验成功，当前用户：$uname',
+        );
+      }
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: 'Cookie 已失效或未登录',
+      );
+    } catch (error) {
+      return LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.warning,
+        message: 'Cookie 检查失败：$error',
+      );
+    }
   }
 
   @override

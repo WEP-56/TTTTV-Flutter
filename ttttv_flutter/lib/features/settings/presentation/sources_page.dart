@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
+import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
 
 class SourcesPage extends ConsumerStatefulWidget {
@@ -57,7 +57,7 @@ class _SourcesPageState extends ConsumerState<SourcesPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: const DragToMoveArea(
+        title: const PlatformDragToMoveArea(
           child: SizedBox(
             width: double.infinity,
             child: Align(

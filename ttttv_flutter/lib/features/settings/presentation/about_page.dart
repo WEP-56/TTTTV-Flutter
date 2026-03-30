@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:window_manager/window_manager.dart';
+
+import '../../../core/platform/platform_window.dart';
 
 const _githubRepositoryUrl = 'https://github.com/WEP-56/TTTTV-Flutter';
 
@@ -28,7 +29,7 @@ class AboutPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: const DragToMoveArea(
+        title: const PlatformDragToMoveArea(
           child: SizedBox(
             width: double.infinity,
             child: Align(

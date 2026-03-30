@@ -1,6 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+export '../features/settings/application/app_settings_notifier.dart';
+export '../features/settings/domain/app_settings.dart';
+
 import '../features/favorites/data/local_favorites_repository.dart';
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/data/local_history_repository.dart';
@@ -31,6 +34,7 @@ import '../features/search/data/native_search_repository.dart';
 import '../features/search/data/native_source_crawler.dart';
 import '../features/search/domain/search_repository.dart';
 import '../features/settings/data/local_sources_store.dart';
+import '../features/settings/application/app_settings_notifier.dart';
 import '../features/settings/domain/sources_repository.dart';
 import '../features/settings/domain/storage_manager.dart';
 import 'models/vod_models.dart';
@@ -62,9 +66,11 @@ final nativeSourceCrawlerProvider = Provider<NativeSourceCrawler>((ref) {
 
 final nativeSearchRepositoryProvider = Provider<SearchRepository>((ref) {
   final sourcesStore = ref.watch(localSourcesStoreProvider);
+  final appSettingsStore = ref.watch(appSettingsStoreProvider);
   final crawler = ref.watch(nativeSourceCrawlerProvider);
   return NativeSearchRepository(
     sourcesStore: sourcesStore,
+    appSettingsStore: appSettingsStore,
     crawler: crawler,
   );
 });
@@ -214,10 +220,13 @@ final liveRoomControllerProvider = StateNotifierProvider.family<
     ({String platform, String roomId})>((ref, key) {
   final registry = ref.watch(liveProviderRegistryProvider);
   final libraryStore = ref.watch(liveLibraryStoreProvider);
+  final settings = ref.read(appSettingsProvider);
   return LiveRoomController(
     registry,
     libraryStore,
     key.platform,
     key.roomId,
+    settings.liveQualityPreference,
+    settings.liveDanmakuEnabled,
   );
 });

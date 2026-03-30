@@ -49,6 +49,11 @@ class HuyaLiveProvider extends LiveProvider {
   }
 
   @override
+  Future<String> getSavedCookie() {
+    return _authService.getCookie();
+  }
+
+  @override
   Future<void> saveCookie(String cookie) {
     return _authService.saveCookie(cookie);
   }
@@ -56,6 +61,34 @@ class HuyaLiveProvider extends LiveProvider {
   @override
   Future<void> clearAuth() {
     return _authService.clearCookie();
+  }
+
+  @override
+  Future<LiveAuthCheckResult> checkAuth() async {
+    final cookie = await _authService.getCookie();
+    if (cookie.trim().isEmpty) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.failure,
+        message: '未保存 Cookie',
+      );
+    }
+
+    final normalized = cookie.toLowerCase();
+    final hasYyuid = normalized.contains('yyuid=');
+    final hasUdbUid = normalized.contains('udb_uid=');
+    final hasHuyaWebUid = normalized.contains('huya_web_uid=');
+
+    if ((hasYyuid || hasUdbUid) && hasHuyaWebUid) {
+      return const LiveAuthCheckResult(
+        status: LiveAuthCheckStatus.warning,
+        message: '基础检查通过，已包含虎牙登录关键字段；当前未接入强校验接口。',
+      );
+    }
+
+    return const LiveAuthCheckResult(
+      status: LiveAuthCheckStatus.failure,
+      message: 'Cookie 缺少关键字段，可能不是完整的虎牙登录 Cookie。',
+    );
   }
 
   @override

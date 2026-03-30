@@ -4,9 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../../core/models/vod_models.dart';
+import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
 import '../application/live_room_controller.dart';
 import '../core/providers/live_provider.dart';
@@ -31,6 +31,7 @@ class LiveRoomPage extends ConsumerStatefulWidget {
 
 class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
   final FocusNode _keyboardFocusNode = FocusNode();
+  late final PlatformFullscreenBinding _fullscreenBinding;
 
   bool _showControls = true;
   bool _isFullscreen = false;
@@ -40,6 +41,26 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
   @override
   void initState() {
     super.initState();
+    _fullscreenBinding = PlatformFullscreenBinding(
+      onEnterFullscreen: () {
+        if (!mounted) return;
+        setState(() {
+          _isFullscreen = true;
+          _isTogglingFullscreen = false;
+          _showControls = true;
+        });
+        _startHideTimer();
+      },
+      onLeaveFullscreen: () {
+        if (!mounted) return;
+        setState(() {
+          _isFullscreen = false;
+          _isTogglingFullscreen = false;
+          _showControls = true;
+        });
+      },
+    );
+    _fullscreenBinding.attach();
     _keyboardFocusNode.requestFocus();
     _startHideTimer();
 
@@ -58,9 +79,11 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
   void dispose() {
     _hideTimer?.cancel();
     _keyboardFocusNode.dispose();
+    _fullscreenBinding.detach();
     if (_isFullscreen) {
-      windowManager.setFullScreen(false);
+      unawaited(setPlatformFullscreen(false));
     }
+    unawaited(restorePlatformSystemUi());
     super.dispose();
   }
 
@@ -84,7 +107,7 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     if (_isTogglingFullscreen) return;
     final next = !_isFullscreen;
     setState(() => _isTogglingFullscreen = true);
-    await windowManager.setFullScreen(next);
+    await setPlatformFullscreen(next);
     if (!mounted) return;
     setState(() {
       _isFullscreen = next;
@@ -219,10 +242,12 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return PopScope<void>(
-      canPop: true,
+      canPop: !_isFullscreen,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop && _isFullscreen) {
-          windowManager.setFullScreen(false);
+        if (!didPop && _isFullscreen) {
+          unawaited(setPlatformFullscreen(false));
+          unawaited(restorePlatformSystemUi());
+          return;
         }
       },
       child: Scaffold(
@@ -499,7 +524,7 @@ class _LiveRoomPageState extends ConsumerState<LiveRoomPage> {
             Expanded(
               child: fullscreen
                   ? _buildRoomTitle(state)
-                  : DragToMoveArea(
+                  : PlatformDragToMoveArea(
                       child: SizedBox(
                         width: double.infinity,
                         child: _buildRoomTitle(state),
