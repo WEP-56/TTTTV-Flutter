@@ -31,9 +31,9 @@ final homeRecommendProvider = FutureProvider<HomeRecommendData>((ref) async {
   ]);
 
   return HomeRecommendData(
-    movies: results[0].items,
-    tvShows: results[1].items,
-    shows: results[2].items,
+    movies: (results[0] as DoubanCategoryResult).items,
+    tvShows: (results[1] as DoubanCategoryResult).items,
+    shows: (results[2] as DoubanCategoryResult).items,
     bangumi: _dedupeAnime(results[3] as List<DoubanItem>),
   );
 });
