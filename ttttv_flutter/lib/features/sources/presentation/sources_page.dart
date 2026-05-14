@@ -621,6 +621,14 @@ class _DetectSourcesTabState extends ConsumerState<_DetectSourcesTab> {
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
+  String _healthLabel(SiteWithStatus site) {
+    switch (site.effectiveHealthStatus) {
+      case 'healthy': return '健康';
+      case 'degraded': return '较差';
+      case 'unhealthy': return '异常';
+      default: return '状态未知';
+    }
+  }
 }
 
 // ─── Shared widgets ────────────────────────────────────────────────────────────
@@ -1200,6 +1208,22 @@ class _HintCard extends StatelessWidget {
       ]),
     );
   }
+}
+
+String _healthLabelTop(SiteWithStatus site) {
+  switch (site.effectiveHealthStatus) {
+    case 'healthy': return '健康';
+    case 'degraded': return '较差';
+    case 'unhealthy': return '异常';
+    default: return '状态未知';
+  }
+}
+
+String _healthChipLabel(SiteWithStatus site) {
+  final label = _healthLabelTop(site);
+  final t = site.responseTimeMs;
+  if (t == null) return label;
+  return '$label ${t < 1000 ? '${t}ms' : '${(t / 1000).toStringAsFixed(1)}s'}';
 }
 
 class _DetailRow extends StatelessWidget {

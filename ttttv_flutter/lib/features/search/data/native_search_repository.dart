@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import '../../../core/models/vod_models.dart';
-import '../../settings/data/local_app_settings_store.dart';
 import '../../settings/data/local_sources_store.dart';
 import '../domain/search_repository.dart';
 import 'native_source_crawler.dart';
@@ -10,14 +9,11 @@ import 'search_cache.dart';
 class NativeSearchRepository implements SearchRepository {
   NativeSearchRepository({
     required LocalSourcesStore sourcesStore,
-    required LocalAppSettingsStore appSettingsStore,
     required NativeSourceCrawler crawler,
   })  : _sourcesStore = sourcesStore,
-        _appSettingsStore = appSettingsStore,
         _crawler = crawler;
 
   final LocalSourcesStore _sourcesStore;
-  final LocalAppSettingsStore _appSettingsStore;
   final NativeSourceCrawler _crawler;
   final _cache = SearchCache();
 

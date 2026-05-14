@@ -47,11 +47,9 @@ final nativeSourceCrawlerProvider = Provider<NativeSourceCrawler>((ref) {
 
 final nativeSearchRepositoryProvider = Provider<SearchRepository>((ref) {
   final sourcesStore = ref.watch(localSourcesStoreProvider);
-  final appSettingsStore = ref.watch(appSettingsStoreProvider);
   final crawler = ref.watch(nativeSourceCrawlerProvider);
   return NativeSearchRepository(
     sourcesStore: sourcesStore,
-    appSettingsStore: appSettingsStore,
     crawler: crawler,
   );
 });
