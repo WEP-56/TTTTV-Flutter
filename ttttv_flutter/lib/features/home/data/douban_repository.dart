@@ -154,7 +154,6 @@ class DoubanRepository {
       return DoubanCategoryResult(items: []);
     }
   }
-}
 
   /// 获取 Bangumi 新番日历
   Future<List<DoubanItem>> fetchBangumiCalendar() async {
