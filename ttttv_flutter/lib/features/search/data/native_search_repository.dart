@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../core/models/vod_models.dart';
 import '../../settings/data/local_app_settings_store.dart';
 import '../../settings/data/local_sources_store.dart';
@@ -82,11 +84,12 @@ class NativeSearchRepository implements SearchRepository {
         }
 
         return results;
-      } on TimeoutException {
-        _cache.set(source.key, query, 1, CachedPageStatus.timeout, const []);
-        return const <VodItem>[];
       } catch (error) {
-        lastError = error;
+        if (error is TimeoutException) {
+          _cache.set(source.key, query, 1, CachedPageStatus.timeout, const []);
+        } else {
+          lastError = error;
+        }
         return const <VodItem>[];
       }
     });
@@ -120,10 +123,10 @@ class NativeSearchRepository implements SearchRepository {
           .timeout(_perSourceTimeout);
       _cache.set(source.key, query, page, CachedPageStatus.ok, items);
       return items;
-    } on TimeoutException {
-      _cache.set(source.key, query, page, CachedPageStatus.timeout, const []);
-      return const [];
-    } catch (_) {
+    } catch (error) {
+      if (error is TimeoutException) {
+        _cache.set(source.key, query, page, CachedPageStatus.timeout, const []);
+      }
       return const [];
     }
   }

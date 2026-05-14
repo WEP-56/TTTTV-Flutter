@@ -110,7 +110,7 @@ class LocalMediaProxy {
     final cacheKey = uri.toString();
 
     final cached = _playlistCache[cacheKey];
-    if (cached != null && cached.expiresAt > DateTime.now()) {
+    if (cached != null && cached.expiresAt.isAfter(DateTime.now())) {
       request.response.statusCode = HttpStatus.ok;
       request.response.headers.contentType = ContentType(
         'application',
@@ -150,7 +150,8 @@ class LocalMediaProxy {
   void _cachePlaylist(String key, String content) {
     if (_playlistCache.length >= _maxCachedPlaylists) {
       final oldest = _playlistCache.entries.reduce(
-        (a, b) => a.value.expiresAt < b.value.expiresAt ? a : b,
+        (a, b) =>
+            a.value.expiresAt.isBefore(b.value.expiresAt) ? a : b,
       );
       _playlistCache.remove(oldest.key);
     }

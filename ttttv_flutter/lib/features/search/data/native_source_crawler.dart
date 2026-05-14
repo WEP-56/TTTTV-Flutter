@@ -11,10 +11,10 @@ class NativeSourceCrawler {
   final Dio _dio;
 
   static final _m3u8GeneralPattern = RegExp(
-    r'\$(https?://[^"'\''\s]+?\.m3u8)',
+    r'\$(https?://[^\s]+?\.m3u8)',
   );
   static final _m3u8ContentPattern = RegExp(
-    r'(https?://[^"'\''\s]+?\.m3u8[^"'\''\s]*)',
+    r'(https?://[^\s]+?\.m3u8[^\s]*)',
   );
 
   Future<List<VodItem>> search(
@@ -61,7 +61,7 @@ class NativeSourceCrawler {
 
   Future<VodItem> _handleHtmlDetail(LocalVodSource source, String vodId) async {
     final detailUrl = source.detailUrl;
-    final url = '${detailUrl}/index.php/vod/detail/id/$vodId.html';
+    final url = '$detailUrl/index.php/vod/detail/id/$vodId.html';
 
     final response = await _dio.getUri<String>(
       Uri.parse(url),
@@ -77,7 +77,7 @@ class NativeSourceCrawler {
 
     if (lowerKey == 'ffzy') {
       final ffzyPattern = RegExp(
-        r'\$(https?://[^"'\''\s]+?\/\d{8}\/\d+_[a-f0-9]+\/index\.m3u8)',
+        r'\$(https?://[^\s]+?/\d{8}/\d+_[a-f0-9]+/index\.m3u8)',
       );
       matches = ffzyPattern.allMatches(html).map((m) => m.group(1)!).toList();
     }
@@ -94,13 +94,15 @@ class NativeSourceCrawler {
       return parenIndex > 0 ? link.substring(0, parenIndex) : link;
     }).toList();
 
-    final title = _extractHtmlText(html, RegExp(r'<h1[^>]*>([^<]+)<\/h1>')) ?? '';
+    final title =
+        _extractHtmlText(html, RegExp(r'<h1[^>]*>([^<]+)<\/h1>')) ?? '';
     final desc = _extractHtmlText(
           html,
-          RegExp(r'<div[^>]*class=["\']sketch["\'][^>]*>([\s\S]*?)<\/div>'),
+          RegExp(r"""<div[^>]*class=["']sketch["'][^>]*>([\s\S]*?)<\/div>"""),
         ) ??
         '';
-    final coverMatch = RegExp(r'(https?://[^"'\''\s]+?\.jpg)').firstMatch(html);
+    final coverMatch =
+        RegExp(r'(https?://[^\s]+?\.jpg)').firstMatch(html);
     final coverUrl = coverMatch?.group(1) ?? '';
     final yearMatch = RegExp(r'>(\d{4})<').firstMatch(html);
     final yearText = yearMatch?.group(1) ?? 'unknown';

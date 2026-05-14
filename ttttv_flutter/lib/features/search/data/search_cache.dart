@@ -1,4 +1,4 @@
-import '../../search/domain/search_repository.dart';
+import '../../../core/models/vod_models.dart';
 
 enum CachedPageStatus { ok, timeout, forbidden }
 
