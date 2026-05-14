@@ -68,7 +68,15 @@ class SearchController extends StateNotifier<SearchState> {
     );
 
     try {
-      final result = await _repository.search(normalized, bypass: bypass);
+      final accumulated = <VodItem>[];
+      final result = await _repository.search(
+        normalized,
+        bypass: bypass,
+        onBatch: (batch) {
+          accumulated.addAll(batch);
+          state = state.copyWith(results: [...accumulated]);
+        },
+      );
       final history = await _rememberQuery(normalized);
       state = state.copyWith(
         isLoading: false,

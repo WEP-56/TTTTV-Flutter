@@ -6,7 +6,6 @@ import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../domain/storage_manager.dart';
 import 'about_page.dart';
-import 'sources_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -273,29 +272,6 @@ class SettingsPage extends ConsumerWidget {
             ],
           ),
           const Divider(height: 1),
-          const _SectionHeader(title: '片源策略'),
-          _SettingsGroup(
-            children: [
-              SwitchListTile(
-                secondary: const Icon(Icons.health_and_safety_outlined),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                value: appSettings.autoCheckSourceHealthOnLaunch,
-                onChanged: appSettingsNotifier.setAutoCheckSourceHealthOnLaunch,
-                title: const Text('启动时自动检查片源健康度'),
-                subtitle: const Text('适合经常切换片源的场景，但会带来额外网络请求。'),
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.skip_next_rounded),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                value: appSettings.autoSkipBadSources,
-                onChanged: appSettingsNotifier.setAutoSkipBadSources,
-                title: const Text('片源健康异常时自动跳过'),
-                subtitle: const Text('仅建议作用于自动选择流程，不覆盖用户手动指定。'),
-              ),
-            ],
-          ),
-          const Divider(height: 1),
           const _SectionHeader(title: '存储管理'),
           _SettingsGroup(
             children: [
@@ -362,17 +338,6 @@ class SettingsPage extends ConsumerWidget {
                 const Text('当新设备上出现无法联网、Failed host lookup 等情况时，前往系统设置检查联网限制'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => showNetworkPermissionGuideDialog(context),
-          ),
-          const Divider(height: 1),
-          const _SectionHeader(title: '片源'),
-          ListTile(
-            leading: const Icon(Icons.tune_rounded),
-            title: const Text('片源管理'),
-            subtitle: const Text('管理已安装片源，支持新增、删除、启用和远程导入'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SourcesPage()),
-            ),
           ),
           const Divider(height: 1),
           const _SectionHeader(title: '关于'),

@@ -101,11 +101,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     SearchState state,
     ColorScheme colorScheme,
   ) {
-    if (state.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (state.error != null) {
+    if (state.error != null && state.results.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -132,11 +128,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (state.isLoading)
+            const LinearProgressIndicator(),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              '共 ${state.results.length} 条结果'
-              '${state.filteredCount > 0 ? '，已过滤 ${state.filteredCount} 条' : ''}',
+              state.isLoading
+                  ? '已找到 ${state.results.length} 条结果，继续搜索中...'
+                  : '共 ${state.results.length} 条结果'
+                      '${state.filteredCount > 0 ? '，已过滤 ${state.filteredCount} 条' : ''}',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
@@ -168,6 +168,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
         ],
       );
+    }
+
+    if (state.isLoading) {
+      return const Center(child: CircularProgressIndicator());
     }
 
     return ListView(

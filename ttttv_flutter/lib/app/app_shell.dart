@@ -9,10 +9,12 @@ import '../features/home/presentation/home_page.dart';
 import '../features/my/presentation/my_page.dart';
 import '../features/search/presentation/search_page.dart';
 import '../features/settings/presentation/settings_page.dart';
+import '../features/sources/presentation/sources_page.dart';
 
 enum _Section {
   home('首页', Icons.home_rounded, Icons.home_outlined),
   search('搜索', Icons.search_rounded, Icons.search_rounded),
+  sources('片源', Icons.dns_rounded, Icons.dns_outlined),
   my('我的', Icons.person_rounded, Icons.person_outline_rounded),
   settings('设置', Icons.settings_rounded, Icons.settings_outlined);
 
@@ -38,6 +40,7 @@ class _AppShellState extends ConsumerState<AppShell>
   static const _pages = <Widget>[
     HomePage(),
     SearchPage(),
+    SourcesPage(),
     MyPage(),
     SettingsPage(),
   ];
@@ -80,11 +83,6 @@ class _AppShellState extends ConsumerState<AppShell>
         await storageManager.clearCache();
         ref.invalidate(cacheUsageProvider);
       }
-    }
-
-    if (settings.autoCheckSourceHealthOnLaunch) {
-      await ref.read(sourcesRepositoryProvider).checkSites();
-      ref.invalidate(siteListProvider);
     }
   }
 

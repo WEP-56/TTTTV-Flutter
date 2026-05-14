@@ -16,8 +16,6 @@ class AppSettings {
     this.autoSavePlaybackProgress = true,
     this.defaultVideoFit = VideoFitPreference.original,
     this.keepScreenAwakeDuringPlayback = false,
-    this.autoCheckSourceHealthOnLaunch = false,
-    this.autoSkipBadSources = false,
     this.autoClearCacheOnExit = false,
     this.autoClearCacheThreshold = CacheAutoClearThreshold.disabled,
   });
@@ -25,8 +23,6 @@ class AppSettings {
   final bool autoSavePlaybackProgress;
   final VideoFitPreference defaultVideoFit;
   final bool keepScreenAwakeDuringPlayback;
-  final bool autoCheckSourceHealthOnLaunch;
-  final bool autoSkipBadSources;
   final bool autoClearCacheOnExit;
   final CacheAutoClearThreshold autoClearCacheThreshold;
 
@@ -41,8 +37,6 @@ class AppSettings {
     bool? autoSavePlaybackProgress,
     VideoFitPreference? defaultVideoFit,
     bool? keepScreenAwakeDuringPlayback,
-    bool? autoCheckSourceHealthOnLaunch,
-    bool? autoSkipBadSources,
     bool? autoClearCacheOnExit,
     CacheAutoClearThreshold? autoClearCacheThreshold,
   }) {
@@ -52,9 +46,6 @@ class AppSettings {
       defaultVideoFit: defaultVideoFit ?? this.defaultVideoFit,
       keepScreenAwakeDuringPlayback:
           keepScreenAwakeDuringPlayback ?? this.keepScreenAwakeDuringPlayback,
-      autoCheckSourceHealthOnLaunch:
-          autoCheckSourceHealthOnLaunch ?? this.autoCheckSourceHealthOnLaunch,
-      autoSkipBadSources: autoSkipBadSources ?? this.autoSkipBadSources,
       autoClearCacheOnExit: autoClearCacheOnExit ?? this.autoClearCacheOnExit,
       autoClearCacheThreshold:
           autoClearCacheThreshold ?? this.autoClearCacheThreshold,

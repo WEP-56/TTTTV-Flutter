@@ -8,9 +8,6 @@ class LocalAppSettingsStore {
   static const _defaultVideoFitKey = 'app_settings_default_video_fit';
   static const _keepScreenAwakeDuringPlaybackKey =
       'app_settings_keep_screen_awake_during_playback';
-  static const _autoCheckSourceHealthOnLaunchKey =
-      'app_settings_auto_check_source_health_on_launch';
-  static const _autoSkipBadSourcesKey = 'app_settings_auto_skip_bad_sources';
   static const _autoClearCacheOnExitKey =
       'app_settings_auto_clear_cache_on_exit';
   static const _autoClearCacheThresholdKey =
@@ -26,9 +23,6 @@ class LocalAppSettingsStore {
       ),
       keepScreenAwakeDuringPlayback:
           preferences.getBool(_keepScreenAwakeDuringPlaybackKey) ?? false,
-      autoCheckSourceHealthOnLaunch:
-          preferences.getBool(_autoCheckSourceHealthOnLaunchKey) ?? false,
-      autoSkipBadSources: preferences.getBool(_autoSkipBadSourcesKey) ?? false,
       autoClearCacheOnExit:
           preferences.getBool(_autoClearCacheOnExitKey) ?? false,
       autoClearCacheThreshold: _cacheAutoClearThresholdFromStorage(
@@ -50,14 +44,6 @@ class LocalAppSettingsStore {
     await preferences.setBool(
       _keepScreenAwakeDuringPlaybackKey,
       settings.keepScreenAwakeDuringPlayback,
-    );
-    await preferences.setBool(
-      _autoCheckSourceHealthOnLaunchKey,
-      settings.autoCheckSourceHealthOnLaunch,
-    );
-    await preferences.setBool(
-      _autoSkipBadSourcesKey,
-      settings.autoSkipBadSources,
     );
     await preferences.setBool(
       _autoClearCacheOnExitKey,

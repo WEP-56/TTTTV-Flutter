@@ -37,14 +37,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     return _save(state.copyWith(keepScreenAwakeDuringPlayback: enabled));
   }
 
-  Future<void> setAutoCheckSourceHealthOnLaunch(bool enabled) {
-    return _save(state.copyWith(autoCheckSourceHealthOnLaunch: enabled));
-  }
-
-  Future<void> setAutoSkipBadSources(bool enabled) {
-    return _save(state.copyWith(autoSkipBadSources: enabled));
-  }
-
   Future<void> setAutoClearCacheOnExit(bool enabled) {
     return _save(state.copyWith(autoClearCacheOnExit: enabled));
   }

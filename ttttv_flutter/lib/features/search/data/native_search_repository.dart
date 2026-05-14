@@ -25,18 +25,15 @@ class NativeSearchRepository implements SearchRepository {
   static const _maxPages = 5;
 
   @override
-  Future<SearchResult> search(String keyword, {bool bypass = false}) async {
+  Future<SearchResult> search(String keyword, {bool bypass = false, OnSourceBatch? onBatch}) async {
     final query = keyword.trim();
     if (query.isEmpty) {
       return SearchResult(items: const [], filteredCount: 0);
     }
 
-    final settings = await _appSettingsStore.load();
-    final sources = (await _sourcesStore.loadAllSources()).where((source) {
-      if (!source.enabled) return false;
-      if (settings.autoSkipBadSources && source.isBadHealth) return false;
-      return true;
-    }).toList(growable: false);
+    final sources = (await _sourcesStore.loadAllSources())
+        .where((source) => source.enabled)
+        .toList(growable: false);
 
     if (sources.isEmpty) {
       return SearchResult(items: const [], filteredCount: 0);
@@ -46,7 +43,7 @@ class NativeSearchRepository implements SearchRepository {
     var successCount = 0;
     final allItems = <VodItem>[];
 
-    final sourceFutures = sources.map((source) async {
+    final futures = sources.map((source) async {
       try {
         final entry = _cache.get(source.key, query, 1);
         if (entry != null) {
@@ -54,8 +51,7 @@ class NativeSearchRepository implements SearchRepository {
             successCount++;
             final results = <VodItem>[...entry.data];
             if (entry.pageCount != null && entry.pageCount! > 1) {
-              final extraPages =
-                  (entry.pageCount!).clamp(2, _maxPages);
+              final extraPages = entry.pageCount!.clamp(2, _maxPages);
               final extraResults = await Future.wait(
                 List.generate(extraPages - 1, (i) => i + 2)
                     .map((page) => _fetchPage(source, query, page)),
@@ -94,9 +90,12 @@ class NativeSearchRepository implements SearchRepository {
       }
     });
 
-    final results = await Future.wait(sourceFutures);
-    for (final items in results) {
-      allItems.addAll(items);
+    for (final future in futures) {
+      final items = await future;
+      if (items.isNotEmpty) {
+        allItems.addAll(items);
+        onBatch?.call(items);
+      }
     }
 
     if (successCount == 0 && lastError != null) {
