@@ -6,7 +6,6 @@ import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../domain/storage_manager.dart';
 import 'about_page.dart';
-import 'live_cookie_management_page.dart';
 import 'sources_page.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -274,67 +273,6 @@ class SettingsPage extends ConsumerWidget {
             ],
           ),
           const Divider(height: 1),
-          const _SectionHeader(title: '直播'),
-          _SettingsGroup(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.high_quality_rounded),
-                title: const Text('默认直播清晰度'),
-                subtitle: Text(
-                  _liveQualityPreferenceLabel(
-                      appSettings.liveQualityPreference),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: SegmentedButton<LiveQualityPreference>(
-                  segments: const [
-                    ButtonSegment<LiveQualityPreference>(
-                      value: LiveQualityPreference.highest,
-                      label: Text('最高'),
-                    ),
-                    ButtonSegment<LiveQualityPreference>(
-                      value: LiveQualityPreference.lowest,
-                      label: Text('最低'),
-                    ),
-                    ButtonSegment<LiveQualityPreference>(
-                      value: LiveQualityPreference.autoDegrade,
-                      label: Text('自动降级'),
-                    ),
-                  ],
-                  selected: <LiveQualityPreference>{
-                    appSettings.liveQualityPreference,
-                  },
-                  onSelectionChanged: (selection) {
-                    appSettingsNotifier
-                        .setLiveQualityPreference(selection.first);
-                  },
-                ),
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.chat_bubble_outline_rounded),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                value: appSettings.liveDanmakuEnabled,
-                onChanged: appSettingsNotifier.setLiveDanmakuEnabled,
-                title: const Text('默认开启弹幕'),
-                subtitle: const Text('进入支持弹幕的直播间时，按该设置决定初始显示状态。'),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.cookie_outlined),
-                title: const Text('直播登录 Cookie 管理'),
-                subtitle: const Text('查看状态、手动粘贴、清除和检查 Cookie 有效性。'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const LiveCookieManagementPage(),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Divider(height: 1),
           const _SectionHeader(title: '片源策略'),
           _SettingsGroup(
             children: [
@@ -477,17 +415,6 @@ String _videoFitPreferenceLabel(VideoFitPreference preference) {
       return '拉伸';
     case VideoFitPreference.original:
       return '原比例';
-  }
-}
-
-String _liveQualityPreferenceLabel(LiveQualityPreference preference) {
-  switch (preference) {
-    case LiveQualityPreference.lowest:
-      return '最低，优先节省带宽';
-    case LiveQualityPreference.autoDegrade:
-      return '自动降级，优先保证可播放';
-    case LiveQualityPreference.highest:
-      return '最高，优先更高质量';
   }
 }
 

@@ -8,9 +8,6 @@ class LocalAppSettingsStore {
   static const _defaultVideoFitKey = 'app_settings_default_video_fit';
   static const _keepScreenAwakeDuringPlaybackKey =
       'app_settings_keep_screen_awake_during_playback';
-  static const _liveQualityPreferenceKey =
-      'app_settings_live_quality_preference';
-  static const _liveDanmakuEnabledKey = 'app_settings_live_danmaku_enabled';
   static const _autoCheckSourceHealthOnLaunchKey =
       'app_settings_auto_check_source_health_on_launch';
   static const _autoSkipBadSourcesKey = 'app_settings_auto_skip_bad_sources';
@@ -29,10 +26,6 @@ class LocalAppSettingsStore {
       ),
       keepScreenAwakeDuringPlayback:
           preferences.getBool(_keepScreenAwakeDuringPlaybackKey) ?? false,
-      liveQualityPreference: _liveQualityPreferenceFromStorage(
-        preferences.getString(_liveQualityPreferenceKey),
-      ),
-      liveDanmakuEnabled: preferences.getBool(_liveDanmakuEnabledKey) ?? true,
       autoCheckSourceHealthOnLaunch:
           preferences.getBool(_autoCheckSourceHealthOnLaunchKey) ?? false,
       autoSkipBadSources: preferences.getBool(_autoSkipBadSourcesKey) ?? false,
@@ -57,14 +50,6 @@ class LocalAppSettingsStore {
     await preferences.setBool(
       _keepScreenAwakeDuringPlaybackKey,
       settings.keepScreenAwakeDuringPlayback,
-    );
-    await preferences.setString(
-      _liveQualityPreferenceKey,
-      settings.liveQualityPreference.name,
-    );
-    await preferences.setBool(
-      _liveDanmakuEnabledKey,
-      settings.liveDanmakuEnabled,
     );
     await preferences.setBool(
       _autoCheckSourceHealthOnLaunchKey,
@@ -97,17 +82,6 @@ VideoFitPreference _videoFitPreferenceFromStorage(String? value) {
   }
 }
 
-LiveQualityPreference _liveQualityPreferenceFromStorage(String? value) {
-  switch (value) {
-    case 'lowest':
-      return LiveQualityPreference.lowest;
-    case 'autoDegrade':
-      return LiveQualityPreference.autoDegrade;
-    case 'highest':
-    default:
-      return LiveQualityPreference.highest;
-  }
-}
 
 CacheAutoClearThreshold _cacheAutoClearThresholdFromStorage(String? value) {
   switch (value) {

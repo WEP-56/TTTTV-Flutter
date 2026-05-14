@@ -37,14 +37,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     return _save(state.copyWith(keepScreenAwakeDuringPlayback: enabled));
   }
 
-  Future<void> setLiveQualityPreference(LiveQualityPreference preference) {
-    return _save(state.copyWith(liveQualityPreference: preference));
-  }
-
-  Future<void> setLiveDanmakuEnabled(bool enabled) {
-    return _save(state.copyWith(liveDanmakuEnabled: enabled));
-  }
-
   Future<void> setAutoCheckSourceHealthOnLaunch(bool enabled) {
     return _save(state.copyWith(autoCheckSourceHealthOnLaunch: enabled));
   }

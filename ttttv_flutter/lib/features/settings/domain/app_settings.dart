@@ -4,12 +4,6 @@ enum VideoFitPreference {
   stretch,
 }
 
-enum LiveQualityPreference {
-  highest,
-  lowest,
-  autoDegrade,
-}
-
 enum CacheAutoClearThreshold {
   disabled,
   mb500,
@@ -22,8 +16,6 @@ class AppSettings {
     this.autoSavePlaybackProgress = true,
     this.defaultVideoFit = VideoFitPreference.original,
     this.keepScreenAwakeDuringPlayback = false,
-    this.liveQualityPreference = LiveQualityPreference.highest,
-    this.liveDanmakuEnabled = true,
     this.autoCheckSourceHealthOnLaunch = false,
     this.autoSkipBadSources = false,
     this.autoClearCacheOnExit = false,
@@ -33,8 +25,6 @@ class AppSettings {
   final bool autoSavePlaybackProgress;
   final VideoFitPreference defaultVideoFit;
   final bool keepScreenAwakeDuringPlayback;
-  final LiveQualityPreference liveQualityPreference;
-  final bool liveDanmakuEnabled;
   final bool autoCheckSourceHealthOnLaunch;
   final bool autoSkipBadSources;
   final bool autoClearCacheOnExit;
@@ -51,8 +41,6 @@ class AppSettings {
     bool? autoSavePlaybackProgress,
     VideoFitPreference? defaultVideoFit,
     bool? keepScreenAwakeDuringPlayback,
-    LiveQualityPreference? liveQualityPreference,
-    bool? liveDanmakuEnabled,
     bool? autoCheckSourceHealthOnLaunch,
     bool? autoSkipBadSources,
     bool? autoClearCacheOnExit,
@@ -64,9 +52,6 @@ class AppSettings {
       defaultVideoFit: defaultVideoFit ?? this.defaultVideoFit,
       keepScreenAwakeDuringPlayback:
           keepScreenAwakeDuringPlayback ?? this.keepScreenAwakeDuringPlayback,
-      liveQualityPreference:
-          liveQualityPreference ?? this.liveQualityPreference,
-      liveDanmakuEnabled: liveDanmakuEnabled ?? this.liveDanmakuEnabled,
       autoCheckSourceHealthOnLaunch:
           autoCheckSourceHealthOnLaunch ?? this.autoCheckSourceHealthOnLaunch,
       autoSkipBadSources: autoSkipBadSources ?? this.autoSkipBadSources,
