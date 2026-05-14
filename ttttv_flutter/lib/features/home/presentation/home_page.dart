@@ -9,11 +9,13 @@ class HomeRecommendData {
     this.movies = const [],
     this.tvShows = const [],
     this.shows = const [],
+    this.bangumi = const [],
   });
 
   final List<DoubanItem> movies;
   final List<DoubanItem> tvShows;
   final List<DoubanItem> shows;
+  final List<DoubanItem> bangumi;
 }
 
 final homeRecommendProvider = FutureProvider<HomeRecommendData>((ref) async {
@@ -25,14 +27,21 @@ final homeRecommendProvider = FutureProvider<HomeRecommendData>((ref) async {
     repo.fetchCategory(source: source, kind: 'movie', category: '热门', type: '全部'),
     repo.fetchCategory(source: source, kind: 'tv', category: '热门', type: '全部'),
     repo.fetchCategory(source: source, kind: 'tv', category: 'show', type: 'show'),
+    repo.fetchBangumiCalendar(),
   ]);
 
   return HomeRecommendData(
     movies: results[0].items,
     tvShows: results[1].items,
     shows: results[2].items,
+    bangumi: _dedupeAnime(results[3] as List<DoubanItem>),
   );
 });
+
+List<DoubanItem> _dedupeAnime(List<DoubanItem> items) {
+  final seen = <String>{};
+  return items.where((item) => seen.add(item.id)).toList();
+}
 
 void _triggerSearch(WidgetRef ref, String title) {
   ref.read(pendingSearchProvider.notifier).state = title;
@@ -77,7 +86,7 @@ class HomePage extends ConsumerWidget {
         async.when(
           loading: () => SliverList(
             delegate: SliverChildListDelegate([
-              for (final title in ['热门电影', '热门剧集', '热门综艺'])
+              for (final title in ['热门电影', '热门剧集', '新番放送', '热门综艺'])
                 _LoadingSection(title: title),
               const SizedBox(height: 24),
             ]),
@@ -107,6 +116,8 @@ class HomePage extends ConsumerWidget {
             delegate: SliverChildListDelegate([
               _SectionView(title: '热门电影', items: data.movies, source: source),
               _SectionView(title: '热门剧集', items: data.tvShows, source: source),
+              if (data.bangumi.isNotEmpty)
+                _SectionView(title: '新番放送', items: data.bangumi, source: source),
               _SectionView(title: '热门综艺', items: data.shows, source: source),
               const SizedBox(height: 24),
             ]),

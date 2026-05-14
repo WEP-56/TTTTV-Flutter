@@ -156,6 +156,62 @@ class DoubanRepository {
   }
 }
 
+  /// 获取 Bangumi 新番日历
+  Future<List<DoubanItem>> fetchBangumiCalendar() async {
+    try {
+      final response = await _dio.getUri<Object>(
+        Uri.parse('https://api.bgm.tv/calendar'),
+        options: Options(
+          receiveTimeout: const Duration(seconds: 10),
+          responseType: ResponseType.json,
+        ),
+      );
+
+      final data = response.data;
+      final list = (data as List?) ?? [];
+
+      final today = DateTime.now();
+      final weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      final currentWeekday = weekdays[today.weekday % 7];
+
+      final todayItems = list
+          .whereType<Map>()
+          .firstWhere(
+            (day) => () {
+              final wd = day['weekday'];
+              if (wd is Map) return wd['en'] == currentWeekday;
+              return false;
+            }(),
+            orElse: () => const {},
+          );
+
+      final items = (todayItems['items'] as List?) ?? [];
+
+      return items.whereType<Map>().map((item) {
+        final images = (item['images'] as Map?) ?? {};
+        return DoubanItem(
+          id: (item['id'] ?? '').toString(),
+          title: (item['name_cn'] ?? item['name'] ?? '').toString(),
+          poster: (images['large'] ?? images['common'] ?? images['medium'] ?? '').toString(),
+          rate: () {
+            final rating = item['rating'] as Map?;
+            final score = rating?['score'];
+            if (score == null) return null;
+            return double.tryParse(score.toString())?.toStringAsFixed(1);
+          }(),
+          year: () {
+            final airDate = (item['air_date'] ?? '').toString();
+            final match = RegExp(r'\d{4}').firstMatch(airDate);
+            return match?.group(0);
+          }(),
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+}
+
 Map<String, dynamic> _toJson(Object? data) {
   if (data is Map<String, dynamic>) return data;
   if (data is Map) return data.cast<String, dynamic>();

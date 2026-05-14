@@ -72,14 +72,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               hintText: '搜索影视、剧集、动漫',
               leading: const Icon(Icons.search_rounded),
               trailing: [
-                if (_controller.text.isNotEmpty)
+                if (state.isLoading)
+                  IconButton(
+                    icon: const Icon(Icons.stop_circle_rounded),
+                    tooltip: '停止搜索',
+                    onPressed: () => ref.read(searchControllerProvider.notifier).cancelSearch(),
+                  )
+                else if (_controller.text.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
                     onPressed: () {
                       _controller.clear();
-                      ref
-                          .read(searchControllerProvider.notifier)
-                          .clearResults();
+                      ref.read(searchControllerProvider.notifier).clearResults();
                       setState(() {});
                     },
                   ),

@@ -16,9 +16,13 @@ class NativeSearchRepository implements SearchRepository {
   final LocalSourcesStore _sourcesStore;
   final NativeSourceCrawler _crawler;
   final _cache = SearchCache();
+  Object? _currentToken;
 
   static const _perSourceTimeout = Duration(seconds: 8);
   static const _maxPages = 5;
+
+  @override
+  void cancelSearch() => _currentToken = null;
 
   @override
   Future<SearchResult> search(String keyword, {bool bypass = false, OnSourceBatch? onBatch}) async {
@@ -35,6 +39,8 @@ class NativeSearchRepository implements SearchRepository {
       return SearchResult(items: const [], filteredCount: 0);
     }
 
+    final token = Object();
+    _currentToken = token;
     Object? lastError;
     var successCount = 0;
     final allItems = <VodItem>[];
@@ -87,6 +93,9 @@ class NativeSearchRepository implements SearchRepository {
     });
 
     for (final future in futures) {
+      if (_currentToken != token) {
+        return SearchResult(items: allItems, filteredCount: 0);
+      }
       final items = await future;
       if (items.isNotEmpty) {
         allItems.addAll(items);

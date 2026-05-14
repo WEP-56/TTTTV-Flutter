@@ -92,6 +92,10 @@ class SearchController extends StateNotifier<SearchState> {
     }
   }
 
+  void cancelSearch() {
+    _repository.cancelSearch();
+  }
+
   void clearResults() {
     state = state.copyWith(
       results: const [],
