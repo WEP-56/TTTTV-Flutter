@@ -8,13 +8,11 @@ class HomeRecommendData {
   const HomeRecommendData({
     this.movies = const [],
     this.tvShows = const [],
-    this.anime = const [],
     this.shows = const [],
   });
 
   final List<DoubanItem> movies;
   final List<DoubanItem> tvShows;
-  final List<DoubanItem> anime;
   final List<DoubanItem> shows;
 }
 
@@ -25,16 +23,14 @@ final homeRecommendProvider = FutureProvider<HomeRecommendData>((ref) async {
 
   final results = await Future.wait([
     repo.fetchCategory(source: source, kind: 'movie', category: '热门', type: '全部'),
-    repo.fetchCategory(source: source, kind: 'tv', category: 'tv', type: 'tv'),
-    repo.fetchCategory(source: source, kind: 'tv', category: 'anime', type: ''),
+    repo.fetchCategory(source: source, kind: 'tv', category: '热门', type: '全部'),
     repo.fetchCategory(source: source, kind: 'tv', category: 'show', type: 'show'),
   ]);
 
   return HomeRecommendData(
     movies: results[0].items,
     tvShows: results[1].items,
-    anime: results[2].items,
-    shows: results[3].items,
+    shows: results[2].items,
   );
 });
 
@@ -42,15 +38,25 @@ void _triggerSearch(WidgetRef ref, String title) {
   ref.read(pendingSearchProvider.notifier).state = title;
 }
 
+String _proxyDoubanImage(String url, DoubanDataSource source) {
+  if (url.isEmpty || !url.contains('doubanio.com')) return url;
+  switch (source) {
+    case DoubanDataSource.tencentCDN:
+      return url.replaceAll(RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.net');
+    case DoubanDataSource.aliCDN:
+      return url.replaceAll(RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.com');
+    case DoubanDataSource.direct:
+    case DoubanDataSource.custom:
+      return url;
+  }
+}
+
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
-  void _refresh(WidgetRef ref) {
-    ref.invalidate(homeRecommendProvider);
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final source = ref.watch(doubanDataSourceProvider);
     final async = ref.watch(homeRecommendProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -63,7 +69,7 @@ class HomePage extends ConsumerWidget {
           actions: [
             IconButton(
               tooltip: '刷新推荐',
-              onPressed: () => _refresh(ref),
+              onPressed: () => ref.invalidate(homeRecommendProvider),
               icon: const Icon(Icons.refresh_rounded),
             ),
           ],
@@ -71,7 +77,7 @@ class HomePage extends ConsumerWidget {
         async.when(
           loading: () => SliverList(
             delegate: SliverChildListDelegate([
-              for (final title in ['热门电影', '热门剧集', '新番放送', '热门综艺'])
+              for (final title in ['热门电影', '热门剧集', '热门综艺'])
                 _LoadingSection(title: title),
               const SizedBox(height: 24),
             ]),
@@ -85,12 +91,10 @@ class HomePage extends ConsumerWidget {
                   children: [
                     Icon(Icons.error_outline_rounded, size: 48, color: colorScheme.error),
                     const SizedBox(height: 12),
-                    Text('推荐加载失败', style: TextStyle(color: colorScheme.error)),
-                    const SizedBox(height: 8),
-                    Text(error.toString(), style: Theme.of(context).textTheme.bodySmall),
+                    Text('推荐加载失败，请检查豆瓣数据来源设置', style: TextStyle(color: colorScheme.error)),
                     const SizedBox(height: 16),
                     FilledButton.icon(
-                      onPressed: () => _refresh(ref),
+                      onPressed: () => ref.invalidate(homeRecommendProvider),
                       icon: const Icon(Icons.refresh_rounded),
                       label: const Text('重试'),
                     ),
@@ -101,10 +105,9 @@ class HomePage extends ConsumerWidget {
           ),
           data: (data) => SliverList(
             delegate: SliverChildListDelegate([
-              _SectionView(title: '热门电影', items: data.movies),
-              _SectionView(title: '热门剧集', items: data.tvShows),
-              _SectionView(title: '新番放送', items: data.anime),
-              _SectionView(title: '热门综艺', items: data.shows),
+              _SectionView(title: '热门电影', items: data.movies, source: source),
+              _SectionView(title: '热门剧集', items: data.tvShows, source: source),
+              _SectionView(title: '热门综艺', items: data.shows, source: source),
               const SizedBox(height: 24),
             ]),
           ),
@@ -114,10 +117,44 @@ class HomePage extends ConsumerWidget {
   }
 }
 
-class _SectionView extends StatelessWidget {
-  const _SectionView({required this.title, required this.items});
+class _SectionView extends StatefulWidget {
+  const _SectionView({
+    required this.title,
+    required this.items,
+    required this.source,
+  });
   final String title;
   final List<DoubanItem> items;
+  final DoubanDataSource source;
+
+  @override
+  State<_SectionView> createState() => _SectionViewState();
+}
+
+class _SectionViewState extends State<_SectionView> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollLeft() {
+    _scrollController.animateTo(
+      (_scrollController.offset - 280).clamp(0.0, _scrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _scrollRight() {
+    _scrollController.animateTo(
+      (_scrollController.offset + 280).clamp(0.0, _scrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -127,29 +164,49 @@ class _SectionView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              title,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
+            padding: const EdgeInsets.fromLTRB(16, 16, 4, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _scrollLeft,
+                  icon: const Icon(Icons.chevron_left_rounded),
+                  tooltip: '向左滚动',
+                ),
+                IconButton(
+                  onPressed: _scrollRight,
+                  icon: const Icon(Icons.chevron_right_rounded),
+                  tooltip: '向右滚动',
+                ),
+              ],
             ),
           ),
           SizedBox(
             height: 210,
-            child: items.isEmpty
+            child: widget.items.isEmpty
                 ? Center(
                     child: Text('暂无推荐',
                         style: TextStyle(
                             color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   )
                 : ListView.separated(
+                    controller: _scrollController,
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: items.length,
+                    itemCount: widget.items.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (_, index) => _RecommendCard(item: items[index]),
+                    itemBuilder: (_, index) => _RecommendCard(
+                      item: widget.items[index],
+                      source: widget.source,
+                    ),
                   ),
           ),
         ],
@@ -159,12 +216,14 @@ class _SectionView extends StatelessWidget {
 }
 
 class _RecommendCard extends ConsumerWidget {
-  const _RecommendCard({required this.item});
+  const _RecommendCard({required this.item, required this.source});
   final DoubanItem item;
+  final DoubanDataSource source;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    final posterUrl = _proxyDoubanImage(item.poster, source);
 
     return GestureDetector(
       onTap: () => _triggerSearch(ref, item.title),
@@ -178,9 +237,9 @@ class _RecommendCard extends ConsumerWidget {
               child: SizedBox(
                 height: 160,
                 width: 120,
-                child: item.poster.isNotEmpty
+                child: posterUrl.isNotEmpty
                     ? Image.network(
-                        item.poster,
+                        posterUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) =>
                             _PosterFallback(title: item.title),
@@ -284,7 +343,7 @@ class _LoadingSection extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: 8,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (_, index) => SizedBox(
+            itemBuilder: (_, __) => SizedBox(
               width: 120,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
