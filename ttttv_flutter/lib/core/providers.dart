@@ -108,12 +108,11 @@ final siteListProvider = FutureProvider<List<SiteWithStatus>>((ref) async {
 
 final doubanRepositoryProvider = Provider<DoubanRepository>((ref) {
   final dio = ref.watch(nativeVodDioProvider);
-  final settings = ref.watch(appSettingsProvider);
-  return DoubanRepository(dio: dio, customProxyUrl: null);
+  return DoubanRepository(dio: dio);
 });
 
 final doubanDataSourceProvider = Provider<DoubanDataSource>((ref) {
-  return ref.watch(appSettingsProvider).doubanDataSource;
+  return ref.watch(appSettingsProvider.select((s) => s.doubanDataSource));
 });
 
 final pendingSearchProvider = StateProvider<String?>((ref) => null);

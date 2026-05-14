@@ -1,7 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../domain/app_settings.dart'
-    show AppSettings, DoubanDataSource;
+import '../domain/app_settings.dart';
 
 class LocalAppSettingsStore {
   static const _autoSavePlaybackProgressKey =

@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
+import '../../../features/settings/domain/app_settings.dart';
+
 class DoubanItem {
   const DoubanItem({
     required this.id,
@@ -16,24 +18,6 @@ class DoubanItem {
   final String poster;
   final String? rate;
   final String? year;
-}
-
-class DoubanCategoryResult {
-  const DoubanCategoryResult({
-    required this.items,
-  });
-
-  final List<DoubanItem> items;
-}
-
-enum DoubanDataSource {
-  direct('直连豆瓣'),
-  tencentCDN('腾讯 CDN'),
-  aliCDN('阿里 CDN'),
-  custom('自定义');
-
-  const DoubanDataSource(this.label);
-  final String label;
 }
 
 class DoubanRepository {
