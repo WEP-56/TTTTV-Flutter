@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
-import '../../../features/settings/domain/app_settings.dart';
+import '../../settings/domain/app_settings.dart';
 
 class DoubanItem {
   const DoubanItem({
@@ -18,6 +18,11 @@ class DoubanItem {
   final String poster;
   final String? rate;
   final String? year;
+}
+
+class DoubanCategoryResult {
+  const DoubanCategoryResult({required this.items});
+  final List<DoubanItem> items;
 }
 
 class DoubanRepository {
@@ -146,7 +151,7 @@ class DoubanRepository {
 
       return DoubanCategoryResult(items: items);
     } catch (_) {
-      return const DoubanCategoryResult(items: []);
+      return DoubanCategoryResult(items: []);
     }
   }
 }
