@@ -5,6 +5,8 @@ export '../features/settings/application/app_settings_notifier.dart';
 export '../features/settings/domain/app_settings.dart';
 
 import '../features/home/data/douban_repository.dart';
+import '../features/settings/domain/app_settings.dart'
+    show DoubanDataSource;
 import '../features/favorites/data/local_favorites_repository.dart';
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/data/local_history_repository.dart';
