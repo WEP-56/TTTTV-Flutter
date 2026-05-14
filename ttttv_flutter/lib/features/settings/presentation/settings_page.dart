@@ -340,6 +340,27 @@ class SettingsPage extends ConsumerWidget {
             onTap: () => showNetworkPermissionGuideDialog(context),
           ),
           const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.source_rounded),
+            title: const Text('豆瓣数据来源'),
+            subtitle: Text(_doubanSourceLabel(appSettings.doubanDataSource)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: SegmentedButton<DoubanDataSource>(
+              segments: DoubanDataSource.values
+                  .map((s) => ButtonSegment<DoubanDataSource>(
+                        value: s,
+                        label: Text(s.label),
+                      ))
+                  .toList(),
+              selected: <DoubanDataSource>{appSettings.doubanDataSource},
+              onSelectionChanged: (selection) {
+                appSettingsNotifier.setDoubanDataSource(selection.first);
+              },
+            ),
+          ),
+          const Divider(height: 1),
           const _SectionHeader(title: '关于'),
           ListTile(
             leading: const Icon(Icons.info_outline_rounded),
@@ -380,6 +401,19 @@ String _videoFitPreferenceLabel(VideoFitPreference preference) {
       return '拉伸';
     case VideoFitPreference.original:
       return '原比例';
+  }
+}
+
+String _doubanSourceLabel(DoubanDataSource source) {
+  switch (source) {
+    case DoubanDataSource.direct:
+      return '直连豆瓣，国内可能较慢';
+    case DoubanDataSource.tencentCDN:
+      return '腾讯云 CDN 镜像，国内推荐';
+    case DoubanDataSource.aliCDN:
+      return '阿里云 CDN 镜像，国内推荐';
+    case DoubanDataSource.custom:
+      return '自定义代理地址';
   }
 }
 

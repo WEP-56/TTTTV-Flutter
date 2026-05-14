@@ -1,11 +1,13 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../domain/app_settings.dart';
+import '../domain/app_settings.dart'
+    show AppSettings, DoubanDataSource;
 
 class LocalAppSettingsStore {
   static const _autoSavePlaybackProgressKey =
       'app_settings_auto_save_playback_progress';
   static const _defaultVideoFitKey = 'app_settings_default_video_fit';
+  static const _doubanDataSourceKey = 'app_settings_douban_data_source';
   static const _keepScreenAwakeDuringPlaybackKey =
       'app_settings_keep_screen_awake_during_playback';
   static const _autoClearCacheOnExitKey =
@@ -20,6 +22,9 @@ class LocalAppSettingsStore {
           preferences.getBool(_autoSavePlaybackProgressKey) ?? true,
       defaultVideoFit: _videoFitPreferenceFromStorage(
         preferences.getString(_defaultVideoFitKey),
+      ),
+      doubanDataSource: _doubanDataSourceFromStorage(
+        preferences.getString(_doubanDataSourceKey),
       ),
       keepScreenAwakeDuringPlayback:
           preferences.getBool(_keepScreenAwakeDuringPlaybackKey) ?? false,
@@ -40,6 +45,10 @@ class LocalAppSettingsStore {
     await preferences.setString(
       _defaultVideoFitKey,
       settings.defaultVideoFit.name,
+    );
+    await preferences.setString(
+      _doubanDataSourceKey,
+      settings.doubanDataSource.name,
     );
     await preferences.setBool(
       _keepScreenAwakeDuringPlaybackKey,
@@ -68,6 +77,20 @@ VideoFitPreference _videoFitPreferenceFromStorage(String? value) {
   }
 }
 
+
+DoubanDataSource _doubanDataSourceFromStorage(String? value) {
+  switch (value) {
+    case 'tencentCDN':
+      return DoubanDataSource.tencentCDN;
+    case 'aliCDN':
+      return DoubanDataSource.aliCDN;
+    case 'custom':
+      return DoubanDataSource.custom;
+    case 'direct':
+    default:
+      return DoubanDataSource.direct;
+  }
+}
 
 CacheAutoClearThreshold _cacheAutoClearThresholdFromStorage(String? value) {
   switch (value) {

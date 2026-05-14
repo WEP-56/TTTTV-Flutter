@@ -37,6 +37,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     return _save(state.copyWith(keepScreenAwakeDuringPlayback: enabled));
   }
 
+  Future<void> setDoubanDataSource(DoubanDataSource source) {
+    return _save(state.copyWith(doubanDataSource: source));
+  }
+
   Future<void> setAutoClearCacheOnExit(bool enabled) {
     return _save(state.copyWith(autoClearCacheOnExit: enabled));
   }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 export '../features/settings/application/app_settings_notifier.dart';
 export '../features/settings/domain/app_settings.dart';
 
+import '../features/home/data/douban_repository.dart';
 import '../features/favorites/data/local_favorites_repository.dart';
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/data/local_history_repository.dart';
@@ -103,6 +104,16 @@ final favoriteItemsProvider = FutureProvider<List<FavoriteItem>>((ref) async {
 final siteListProvider = FutureProvider<List<SiteWithStatus>>((ref) async {
   final repository = ref.watch(sourcesRepositoryProvider);
   return repository.fetchSites();
+});
+
+final doubanRepositoryProvider = Provider<DoubanRepository>((ref) {
+  final dio = ref.watch(nativeVodDioProvider);
+  final settings = ref.watch(appSettingsProvider);
+  return DoubanRepository(dio: dio, customProxyUrl: null);
+});
+
+final doubanDataSourceProvider = Provider<DoubanDataSource>((ref) {
+  return ref.watch(appSettingsProvider).doubanDataSource;
 });
 
 final pendingSearchProvider = StateProvider<String?>((ref) => null);

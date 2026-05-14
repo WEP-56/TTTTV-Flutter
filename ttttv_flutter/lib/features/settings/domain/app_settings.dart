@@ -4,6 +4,16 @@ enum VideoFitPreference {
   stretch,
 }
 
+enum DoubanDataSource {
+  direct('直连豆瓣'),
+  tencentCDN('腾讯 CDN'),
+  aliCDN('阿里 CDN'),
+  custom('自定义');
+
+  const DoubanDataSource(this.label);
+  final String label;
+}
+
 enum CacheAutoClearThreshold {
   disabled,
   mb500,
@@ -16,6 +26,7 @@ class AppSettings {
     this.autoSavePlaybackProgress = true,
     this.defaultVideoFit = VideoFitPreference.original,
     this.keepScreenAwakeDuringPlayback = false,
+    this.doubanDataSource = DoubanDataSource.direct,
     this.autoClearCacheOnExit = false,
     this.autoClearCacheThreshold = CacheAutoClearThreshold.disabled,
   });
@@ -23,6 +34,7 @@ class AppSettings {
   final bool autoSavePlaybackProgress;
   final VideoFitPreference defaultVideoFit;
   final bool keepScreenAwakeDuringPlayback;
+  final DoubanDataSource doubanDataSource;
   final bool autoClearCacheOnExit;
   final CacheAutoClearThreshold autoClearCacheThreshold;
 
@@ -37,6 +49,7 @@ class AppSettings {
     bool? autoSavePlaybackProgress,
     VideoFitPreference? defaultVideoFit,
     bool? keepScreenAwakeDuringPlayback,
+    DoubanDataSource? doubanDataSource,
     bool? autoClearCacheOnExit,
     CacheAutoClearThreshold? autoClearCacheThreshold,
   }) {
@@ -46,6 +59,7 @@ class AppSettings {
       defaultVideoFit: defaultVideoFit ?? this.defaultVideoFit,
       keepScreenAwakeDuringPlayback:
           keepScreenAwakeDuringPlayback ?? this.keepScreenAwakeDuringPlayback,
+      doubanDataSource: doubanDataSource ?? this.doubanDataSource,
       autoClearCacheOnExit: autoClearCacheOnExit ?? this.autoClearCacheOnExit,
       autoClearCacheThreshold:
           autoClearCacheThreshold ?? this.autoClearCacheThreshold,
