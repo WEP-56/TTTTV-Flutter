@@ -468,6 +468,9 @@ class LocalVodSource {
   bool get isBadHealth =>
       healthStatus == 'degraded' || healthStatus == 'unhealthy';
 
+  bool get hasCustomDetail =>
+      detailUrl.isNotEmpty && detailUrl != apiUrl;
+
   factory LocalVodSource.fromJsonMap(String key, Map<String, dynamic> json) {
     return LocalVodSource(
       key: key,

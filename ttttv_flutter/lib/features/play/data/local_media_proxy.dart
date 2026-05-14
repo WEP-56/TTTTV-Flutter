@@ -7,6 +7,10 @@ class LocalMediaProxy {
 
   static final LocalMediaProxy instance = LocalMediaProxy._();
 
+  static const _playlistCacheTtl = Duration(minutes: 5);
+  static const _maxCachedPlaylists = 50;
+  final Map<String, _CachedPlaylist> _playlistCache = {};
+
   HttpServer? _server;
   Future<HttpServer>? _starting;
 
@@ -103,6 +107,21 @@ class LocalMediaProxy {
     required Uri uri,
     required Map<String, String> headers,
   }) async {
+    final cacheKey = uri.toString();
+
+    final cached = _playlistCache[cacheKey];
+    if (cached != null && cached.expiresAt > DateTime.now()) {
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.contentType = ContentType(
+        'application',
+        'vnd.apple.mpegurl',
+        charset: 'utf-8',
+      );
+      request.response.write(cached.content);
+      await request.response.close();
+      return;
+    }
+
     final response = await _fetchUpstream(
       request,
       uri: uri,
@@ -116,6 +135,8 @@ class LocalMediaProxy {
       headers: headers,
     );
 
+    _cachePlaylist(cacheKey, rewritten);
+
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType(
       'application',
@@ -124,6 +145,19 @@ class LocalMediaProxy {
     );
     request.response.write(rewritten);
     await request.response.close();
+  }
+
+  void _cachePlaylist(String key, String content) {
+    if (_playlistCache.length >= _maxCachedPlaylists) {
+      final oldest = _playlistCache.entries.reduce(
+        (a, b) => a.value.expiresAt < b.value.expiresAt ? a : b,
+      );
+      _playlistCache.remove(oldest.key);
+    }
+    _playlistCache[key] = _CachedPlaylist(
+      content: content,
+      expiresAt: DateTime.now().add(_playlistCacheTtl),
+    );
   }
 
   Future<void> _proxyBinary(
@@ -323,4 +357,10 @@ class LocalMediaProxy {
     final lower = value.toLowerCase();
     return lower.contains('.m3u8') || lower.contains('m3u8');
   }
+}
+
+class _CachedPlaylist {
+  _CachedPlaylist({required this.content, required this.expiresAt});
+  final String content;
+  final DateTime expiresAt;
 }
