@@ -100,61 +100,6 @@ class DoubanRepository {
     return DoubanCategoryResult(items: items);
   }
 
-  /// 获取新番放送（Bangumi 日历）
-  Future<DoubanCategoryResult> fetchBangumiCalendar({
-    required DoubanDataSource source,
-  }) async {
-    final base = _baseUrl(source);
-    final today = DateTime.now();
-    final weekdays = [
-      'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'
-    ];
-    final currentWeekday = weekdays[today.weekday % 7];
-
-    final url = '$base/rexxar/api/v2/subject/recent_hot/tv'
-        '?start=0&limit=20&category=anime&type=$currentWeekday';
-
-    try {
-      final response = await _dio.getUri<Object>(
-        Uri.parse(url),
-        options: Options(
-          headers: _apiHeaders,
-          receiveTimeout: const Duration(seconds: 10),
-          responseType: ResponseType.json,
-        ),
-      );
-
-      final data = _toJson(response.data);
-      final items = (data['items'] as List?)
-              ?.map((item) {
-                final m = _toJson(item);
-                final pic = _toJson(m['pic'] ?? const {});
-                final rating = _toJson(m['rating'] ?? const {});
-                return DoubanItem(
-                  id: m['id']?.toString() ?? '',
-                  title: m['title']?.toString() ?? '',
-                  poster: (pic['normal'] ?? pic['large'])?.toString() ?? '',
-                  rate: () {
-                    final v = rating['value'];
-                    if (v == null) return null;
-                    return double.tryParse(v.toString())?.toStringAsFixed(1);
-                  }(),
-                  year: () {
-                    final subtitle = m['card_subtitle']?.toString() ?? '';
-                    final match = RegExp(r'\d{4}').firstMatch(subtitle);
-                    return match?.group(0);
-                  }(),
-                );
-              })
-              .toList(growable: false) ??
-          [];
-
-      return DoubanCategoryResult(items: items);
-    } catch (_) {
-      return DoubanCategoryResult(items: []);
-    }
-  }
-
   /// 获取 Bangumi 新番日历
   Future<List<DoubanItem>> fetchBangumiCalendar() async {
     try {
