@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/d/TTTTV-Flutter/HANDOFF_UI_REWRITE.md:*)"
+      "Bash(/d/TTTTV-Flutter/HANDOFF_UI_REWRITE.md:*)",
+      "Bash(git config *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
