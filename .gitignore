@@ -49,3 +49,6 @@ frentend-tauri
 backend-example
 影视参考
 sources.json
+
+# Reference upstream (kept locally only)
+/luna-tv-fork/
