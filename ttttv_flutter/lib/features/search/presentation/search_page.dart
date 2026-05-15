@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +18,8 @@ class SearchPage extends ConsumerStatefulWidget {
 class _SearchPageState extends ConsumerState<SearchPage> {
   late final TextEditingController _controller;
   String? _lastConsumedPendingSearch;
+  Set<String> _selectedSourceKeys = {};
+  bool _showSourceFilter = false;
 
   @override
   void initState() {
@@ -49,7 +53,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _search(String keyword) {
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
-    ref.read(searchControllerProvider.notifier).search(trimmed);
+    ref.read(searchControllerProvider.notifier).search(
+          trimmed,
+          sourceKeys: _selectedSourceKeys.isEmpty ? null : _selectedSourceKeys,
+        );
   }
 
   @override
@@ -66,7 +73,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
             child: SearchBar(
               controller: _controller,
               hintText: '搜索影视、剧集、动漫',
@@ -91,6 +98,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onSubmitted: _search,
               onChanged: (_) => setState(() {}),
             ),
+          ),
+          _SourceFilterRow(
+            showFilter: _showSourceFilter,
+            selectedKeys: _selectedSourceKeys,
+            onToggleFilter: () => setState(() => _showSourceFilter = !_showSourceFilter),
+            onSelectionChanged: (keys) => setState(() => _selectedSourceKeys = keys),
           ),
           Expanded(
             child: _buildBody(context, state, colorScheme),
@@ -334,6 +347,141 @@ class _Placeholder extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
       ),
+    );
+  }
+}
+
+/// 片源筛选行。默认折叠，点击"筛选"按钮展开 chip 列表。
+/// 空选 = 聚合搜索所有启用站点。
+class _SourceFilterRow extends ConsumerWidget {
+  const _SourceFilterRow({
+    required this.showFilter,
+    required this.selectedKeys,
+    required this.onToggleFilter,
+    required this.onSelectionChanged,
+  });
+
+  final bool showFilter;
+  final Set<String> selectedKeys;
+  final VoidCallback onToggleFilter;
+  final ValueChanged<Set<String>> onSelectionChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sitesAsync = ref.watch(siteListProvider);
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Row(
+            children: [
+              GestureDetector(
+                onTap: onToggleFilter,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      showFilter
+                          ? Icons.filter_list_off_rounded
+                          : Icons.filter_list_rounded,
+                      size: 18,
+                      color: cs.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      selectedKeys.isEmpty
+                          ? '全部片源'
+                          : '已选 ${selectedKeys.length} 个片源',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selectedKeys.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => onSelectionChanged({}),
+                  child: Text(
+                    '清除',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: cs.primary,
+                        ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (showFilter)
+          sitesAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: LinearProgressIndicator(),
+            ),
+            error: (_, __) => const SizedBox.shrink(),
+            data: (sites) {
+              final enabledSites =
+                  sites.where((s) => s.enabled).toList(growable: false);
+              if (enabledSites.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '没有启用的片源',
+                    style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+                  ),
+                );
+              }
+              return SizedBox(
+                height: 38,
+                child: ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      ...ScrollConfiguration.of(context).dragDevices,
+                      PointerDeviceKind.mouse,
+                    },
+                    scrollbars: false,
+                  ),
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: enabledSites.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, index) {
+                      final site = enabledSites[index];
+                      final selected = selectedKeys.contains(site.key);
+                      return FilterChip(
+                        label: Text(
+                          site.name,
+                          style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+                        ),
+                        selected: selected,
+                        showCheckmark: false,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        onSelected: (_) {
+                          final next = Set<String>.from(selectedKeys);
+                          if (selected) {
+                            next.remove(site.key);
+                          } else {
+                            next.add(site.key);
+                          }
+                          onSelectionChanged(next);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+        const SizedBox(height: 4),
+      ],
     );
   }
 }

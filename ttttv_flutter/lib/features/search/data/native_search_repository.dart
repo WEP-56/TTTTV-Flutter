@@ -55,6 +55,7 @@ class NativeSearchRepository implements SearchRepository {
     String keyword, {
     bool bypass = false,
     OnSourceBatch? onBatch,
+    Set<String>? sourceKeys,
   }) async {
     final query = keyword.trim();
     if (query.isEmpty) {
@@ -64,9 +65,15 @@ class NativeSearchRepository implements SearchRepository {
     // 启动新会话前，先取消旧的请求
     cancelSearch();
 
-    final sources = (await _sourcesStore.loadAllSources())
+    final allSources = (await _sourcesStore.loadAllSources())
         .where((source) => source.enabled)
         .toList(growable: false);
+
+    // 如果指定了 sourceKeys，只搜索这些站
+    final sources = sourceKeys == null || sourceKeys.isEmpty
+        ? allSources
+        : allSources.where((s) => sourceKeys.contains(s.key)).toList(growable: false);
+
     if (sources.isEmpty) {
       return SearchResult(items: const [], filteredCount: 0);
     }

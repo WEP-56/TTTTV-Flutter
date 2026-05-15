@@ -57,10 +57,11 @@ class DoubanRepository {
     required String category,
     required String type,
     int limit = 20,
+    int start = 0,
   }) async {
     final base = _baseUrl(source);
     final url =
-        '$base/rexxar/api/v2/subject/recent_hot/$kind?start=0&limit=$limit&category=$category&type=$type';
+        '$base/rexxar/api/v2/subject/recent_hot/$kind?start=$start&limit=$limit&category=$category&type=$type';
 
     final response = await _dio.getUri<Object>(
       Uri.parse(url),
@@ -100,43 +101,47 @@ class DoubanRepository {
     return DoubanCategoryResult(items: items);
   }
 
-  /// 获取 Bangumi 新番日历
+  /// 获取 Bangumi 新番日历（当天）
   Future<List<DoubanItem>> fetchBangumiCalendar() async {
     try {
-      final response = await _dio.getUri<Object>(
-        Uri.parse('https://api.bgm.tv/calendar'),
-        options: Options(
-          receiveTimeout: const Duration(seconds: 10),
-          responseType: ResponseType.json,
-        ),
-      );
-
-      final data = response.data;
-      final list = (data as List?) ?? [];
-
+      final all = await fetchBangumiCalendarFull();
       final today = DateTime.now();
       final weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
       final currentWeekday = weekdays[today.weekday % 7];
+      return all[currentWeekday] ?? [];
+    } catch (_) {
+      return [];
+    }
+  }
 
-      final todayItems = list
-          .whereType<Map>()
-          .firstWhere(
-            (day) => () {
-              final wd = day['weekday'];
-              if (wd is Map) return wd['en'] == currentWeekday;
-              return false;
-            }(),
-            orElse: () => const {},
-          );
+  /// 获取 Bangumi 新番日历（全部 7 天），按 weekday key 分组。
+  Future<Map<String, List<DoubanItem>>> fetchBangumiCalendarFull() async {
+    final response = await _dio.getUri<Object>(
+      Uri.parse('https://api.bgm.tv/calendar'),
+      options: Options(
+        receiveTimeout: const Duration(seconds: 10),
+        responseType: ResponseType.json,
+      ),
+    );
 
-      final items = (todayItems['items'] as List?) ?? [];
+    final data = response.data;
+    final list = (data as List?) ?? [];
+    final result = <String, List<DoubanItem>>{};
 
-      return items.whereType<Map>().map((item) {
+    for (final day in list.whereType<Map>()) {
+      final wd = day['weekday'];
+      if (wd is! Map) continue;
+      final key = wd['en']?.toString() ?? '';
+      if (key.isEmpty) continue;
+
+      final items = (day['items'] as List?) ?? [];
+      result[key] = items.whereType<Map>().map((item) {
         final images = (item['images'] as Map?) ?? {};
         return DoubanItem(
           id: (item['id'] ?? '').toString(),
           title: (item['name_cn'] ?? item['name'] ?? '').toString(),
-          poster: (images['large'] ?? images['common'] ?? images['medium'] ?? '').toString(),
+          poster: (images['large'] ?? images['common'] ?? images['medium'] ?? '')
+              .toString(),
           rate: () {
             final rating = item['rating'] as Map?;
             final score = rating?['score'];
@@ -150,9 +155,9 @@ class DoubanRepository {
           }(),
         );
       }).toList();
-    } catch (_) {
-      return [];
     }
+
+    return result;
   }
 }
 

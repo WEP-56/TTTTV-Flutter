@@ -16,6 +16,11 @@ const _minimumWindowSize = Size(900, 600);
 Future<void> bootstrapDesktopApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  // 增大图片缓存容量，避免切换 tab 时封面图重新加载
+  PaintingBinding.instance.imageCache.maximumSize = 500;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 256 * 1024 * 1024; // 256 MB
+
   await windowManager.ensureInitialized();
   final preferences = await SharedPreferences.getInstance();
   final initialWindowSize = _restoreWindowSize(preferences);

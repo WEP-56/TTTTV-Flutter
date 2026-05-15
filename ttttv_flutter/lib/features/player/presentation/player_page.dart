@@ -98,6 +98,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   int _seekGeneration = 0;
   bool _wakelockEnabled = false;
   bool _mobileOrientationApplied = false;
+  double _brightness = 1.0;
 
   PlayEpisode get _currentEpisode =>
       widget.playResult.sources[_sourceIndex].episodes[_episodeIndex];
@@ -297,9 +298,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (!_showControls) {
       setState(() => _showControls = true);
     }
-    _startHideTimer();
+    if (_isMobile) {
+      _startHideTimer();
+    }
   }
 
+  /// 移动端：单击切换
   void _toggleControls() {
     if (!mounted) return;
     setState(() => _showControls = !_showControls);
@@ -308,6 +312,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } else {
       _cancelHideTimer();
     }
+  }
+
+  /// 桌面端：鼠标移入/移动 → 显示
+  void _desktopShowControls() {
+    if (!mounted) return;
+    setState(() => _showControls = true);
+  }
+
+  /// 桌面端：鼠标移出/静止 → 隐藏
+  void _desktopHideControls() {
+    if (!mounted || _drawerOpen) return;
+    setState(() => _showControls = false);
+  }
+
+  /// 手势层请求隐藏控件（长按、拖动开始时）
+  void _forceHideControls() {
+    if (!mounted) return;
+    _cancelHideTimer();
+    setState(() => _showControls = false);
   }
 
   // ---------- 抽屉 ----------
@@ -590,8 +613,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _handleKeyEvent(KeyEvent event) async {
-    if (event is! KeyDownEvent) return;
     final key = event.logicalKey;
+
+    // 长按右方向键 → 2x 倍速（KeyRepeatEvent 表示按住不放）
+    if (event is KeyRepeatEvent && key == LogicalKeyboardKey.arrowRight) {
+      if (!_temporarySpeedActive) {
+        await _setTemporarySpeed(true);
+      }
+      return;
+    }
+
+    // 松开右方向键 → 恢复倍速
+    if (event is KeyUpEvent && key == LogicalKeyboardKey.arrowRight) {
+      if (_temporarySpeedActive) {
+        await _setTemporarySpeed(false);
+      }
+      return;
+    }
+
+    if (event is! KeyDownEvent) return;
+
     if (key == LogicalKeyboardKey.escape) {
       if (_drawerOpen) {
         _closeDrawer();
@@ -697,6 +738,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // 1. 视频面
             PlayerVideoSurface(
               controller: _videoController,
               initialized: _initialized,
@@ -706,72 +748,104 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               errorText: _loadError,
               onRetry: () => _loadEpisode(),
             ),
-            // 中央暂停指示
+            // 2. 中央暂停指示
             _buildCenterPauseIndicator(),
-            // 手势层（位于控件之下，捕获舞台触摸/点击）
-            PlayerGestureLayer(
-              player: _player,
-              volume: _volume,
-              playbackSpeed: _playbackSpeed,
-              enableTouchGestures: _isMobile,
-              onTapStage: _toggleControls,
-              onSeek: _seekTo,
-              onTogglePlayPause: _togglePlayPause,
-              onVolumeChanged: (v) {
-                _showControlsNow();
-                unawaited(_setVolume(v));
-              },
-              onTemporarySpeed: (active) {
-                unawaited(_setTemporarySpeed(active));
-              },
-            ),
-            // 控件层
-            IgnorePointer(
-              ignoring: !_showControls,
-              child: AnimatedOpacity(
+            // 3. 控件层 + 桌面端点击检测（控件作为 GestureDetector 的子节点，
+            //    按钮天然在 gesture arena 里优先胜出，不会冲突）
+            if (_isMobile)
+              AnimatedOpacity(
                 opacity: _showControls ? 1 : 0,
                 duration: const Duration(milliseconds: 180),
-                child: PlayerControlsOverlay(
-                  title: widget.detail.vodName,
-                  subtitle:
-                      '${_currentSource.name.isEmpty ? '线路 ${_sourceIndex + 1}' : _currentSource.name} · ${_currentEpisode.name}',
-                  player: _player,
-                  bufferPosition: _bufferPosition,
-                  fullscreen: _isFullscreen,
-                  canPlayPrevious: _canPlayPrevious,
-                  canPlayNext: _canPlayNext,
-                  volume: _volume,
-                  playbackSpeed: _playbackSpeed,
-                  fitMode: _fitMode,
-                  fitLabel: _fitLabel,
-                  speedOptions: _speedOptions,
-                  episodesActive: _drawerOpen,
-                  compact: compactControls,
-                  onBackPressed: () => unawaited(_handleBackPressed()),
-                  onDragWindow: _isFullscreen || !isDesktopPlatform
-                      ? null
-                      : () => Future<void>.microtask(startPlatformWindowDrag),
-                  onPlayPause: _togglePlayPause,
-                  onSeek: _seekTo,
-                  onSpeedSelected: _setPlaybackSpeed,
-                  onFitSelected: _setFitMode,
-                  onVolumeChanged: _setVolume,
-                  onToggleFullscreen: _toggleFullscreen,
-                  onToggleEpisodes: _toggleDrawer,
-                  onPreviousEpisode: _canPlayPrevious
-                      ? () => _selectEpisode(_sourceIndex, _episodeIndex - 1)
-                      : null,
-                  onNextEpisode: _canPlayNext
-                      ? () => _selectEpisode(_sourceIndex, _episodeIndex + 1)
-                      : null,
-                  onInteractionStart: _cancelHideTimer,
-                  onInteractionEnd: _startHideTimer,
+                child: AbsorbPointer(
+                  absorbing: !_showControls,
+                  child: _buildControlsOverlay(compactControls),
+                ),
+              )
+            else
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => unawaited(_handleDesktopTap()),
+                onDoubleTap: () => unawaited(_toggleFullscreen()),
+                child: AnimatedOpacity(
+                  opacity: _showControls ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: AbsorbPointer(
+                    absorbing: !_showControls,
+                    child: _buildControlsOverlay(compactControls),
+                  ),
                 ),
               ),
-            ),
+            // 4. 最顶层：移动端手势 / 桌面端悬停检测（不拦截点击）
+            if (_isMobile)
+              MobileGestureLayer(
+                player: _player,
+                volume: _volume,
+                brightness: _brightness,
+                onTapToggleControls: _toggleControls,
+                onSeek: _seekTo,
+                onTogglePlayPause: _togglePlayPause,
+                onVolumeChanged: (v) => unawaited(_setVolume(v)),
+                onBrightnessChanged: (v) => setState(() => _brightness = v),
+                onTemporarySpeed: (active) =>
+                    unawaited(_setTemporarySpeed(active)),
+                onHideControls: _forceHideControls,
+              )
+            else
+              DesktopHoverDetector(
+                onShowControls: _desktopShowControls,
+                onHideControls: _desktopHideControls,
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 桌面端单击：依靠 GestureDetector 同时注册 onTap + onDoubleTap 时
+  /// Flutter 自动延迟触发 onTap 来区分单击/双击。
+  /// 注意：这个回调只在用户点击到非控件区域时触发（控件按钮已先消费事件）。
+  Future<void> _handleDesktopTap() async {
+    await _togglePlayPause();
+  }
+
+  Widget _buildControlsOverlay(bool compactControls) {
+    return PlayerControlsOverlay(
+      title: widget.detail.vodName,
+      subtitle:
+          '${_currentSource.name.isEmpty ? '线路 ${_sourceIndex + 1}' : _currentSource.name} · ${_currentEpisode.name}',
+      player: _player,
+      bufferPosition: _bufferPosition,
+      fullscreen: _isFullscreen,
+      canPlayPrevious: _canPlayPrevious,
+      canPlayNext: _canPlayNext,
+      volume: _volume,
+      playbackSpeed: _playbackSpeed,
+      fitMode: _fitMode,
+      fitLabel: _fitLabel,
+      speedOptions: _speedOptions,
+      episodesActive: _drawerOpen,
+      compact: compactControls,
+      onBackPressed: () => unawaited(_handleBackPressed()),
+      onDragWindow: _isFullscreen || !isDesktopPlatform
+          ? null
+          : () => Future<void>.microtask(startPlatformWindowDrag),
+      onPlayPause: _togglePlayPause,
+      onSeek: _seekTo,
+      onSpeedSelected: _setPlaybackSpeed,
+      onFitSelected: _setFitMode,
+      onVolumeChanged: _setVolume,
+      onToggleFullscreen: _toggleFullscreen,
+      onToggleEpisodes: _toggleDrawer,
+      onPreviousEpisode: _canPlayPrevious
+          ? () => _selectEpisode(_sourceIndex, _episodeIndex - 1)
+          : null,
+      onNextEpisode: _canPlayNext
+          ? () => _selectEpisode(_sourceIndex, _episodeIndex + 1)
+          : null,
+      onInteractionStart: _cancelHideTimer,
+      onInteractionEnd: () {
+        if (_isMobile) _startHideTimer();
+      },
     );
   }
 

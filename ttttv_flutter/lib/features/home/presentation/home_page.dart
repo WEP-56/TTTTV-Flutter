@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
 import '../../home/data/douban_repository.dart';
+import 'bangumi_calendar_page.dart';
+import 'category_browse_page.dart';
 
 class HomeRecommendData {
   const HomeRecommendData({
@@ -63,6 +65,25 @@ String _proxyDoubanImage(String url, DoubanDataSource source) {
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
+  void _openCategory(
+    BuildContext context, {
+    required String kind,
+    required String category,
+    required String type,
+    required String title,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CategoryBrowsePage(
+          kind: kind,
+          category: category,
+          type: type,
+          title: title,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final source = ref.watch(doubanDataSourceProvider);
@@ -114,11 +135,33 @@ class HomePage extends ConsumerWidget {
           ),
           data: (data) => SliverList(
             delegate: SliverChildListDelegate([
-              _SectionView(title: '热门电影', items: data.movies, source: source),
-              _SectionView(title: '热门剧集', items: data.tvShows, source: source),
+              _SectionView(
+                title: '热门电影',
+                items: data.movies,
+                source: source,
+                onViewMore: () => _openCategory(context, kind: 'movie', category: '热门', type: '全部', title: '热门电影'),
+              ),
+              _SectionView(
+                title: '热门剧集',
+                items: data.tvShows,
+                source: source,
+                onViewMore: () => _openCategory(context, kind: 'tv', category: '热门', type: '全部', title: '热门剧集'),
+              ),
               if (data.bangumi.isNotEmpty)
-                _SectionView(title: '新番放送', items: data.bangumi, source: source),
-              _SectionView(title: '热门综艺', items: data.shows, source: source),
+                _SectionView(
+                  title: '新番放送',
+                  items: data.bangumi,
+                  source: source,
+                  onViewMore: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const BangumiCalendarPage()),
+                  ),
+                ),
+              _SectionView(
+                title: '热门综艺',
+                items: data.shows,
+                source: source,
+                onViewMore: () => _openCategory(context, kind: 'tv', category: 'show', type: 'show', title: '热门综艺'),
+              ),
               const SizedBox(height: 24),
             ]),
           ),
@@ -133,10 +176,12 @@ class _SectionView extends StatefulWidget {
     required this.title,
     required this.items,
     required this.source,
+    this.onViewMore,
   });
   final String title;
   final List<DoubanItem> items;
   final DoubanDataSource source;
+  final VoidCallback? onViewMore;
 
   @override
   State<_SectionView> createState() => _SectionViewState();
@@ -187,6 +232,15 @@ class _SectionViewState extends State<_SectionView> {
                         ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
+                if (widget.onViewMore != null)
+                  TextButton.icon(
+                    onPressed: widget.onViewMore,
+                    icon: const Text('查看更多'),
+                    label: const Icon(Icons.chevron_right_rounded, size: 18),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
                 IconButton(
                   onPressed: _scrollLeft,
                   icon: const Icon(Icons.chevron_left_rounded),
@@ -252,6 +306,7 @@ class _RecommendCard extends ConsumerWidget {
                     ? Image.network(
                         posterUrl,
                         fit: BoxFit.cover,
+                        gaplessPlayback: true,
                         errorBuilder: (_, __, ___) =>
                             _PosterFallback(title: item.title),
                       )
@@ -261,7 +316,7 @@ class _RecommendCard extends ConsumerWidget {
             const SizedBox(height: 6),
             Text(
               item.title,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context)
                   .textTheme

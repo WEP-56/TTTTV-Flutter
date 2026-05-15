@@ -124,7 +124,10 @@ class _AddSourcesTabState extends ConsumerState<_AddSourcesTab> {
           onImportSelected: () => _importSelected(sites),
         ),
         const SizedBox(height: 16),
-        _ManualAddCard(onAdded: () => _refreshSites()),
+        _ManualAddCard(
+          existingSourceKeys: sites.map((s) => s.key).toSet(),
+          onAdded: () => _refreshSites(),
+        ),
       ],
     );
   }
@@ -787,31 +790,303 @@ class _RemoteImportCard extends StatelessWidget {
   }
 }
 
-class _ManualAddCard extends StatelessWidget {
-  const _ManualAddCard({required this.onAdded});
+class _ManualAddCard extends ConsumerStatefulWidget {
+  const _ManualAddCard({
+    required this.existingSourceKeys,
+    required this.onAdded,
+  });
+
+  final Set<String> existingSourceKeys;
   final VoidCallback onAdded;
 
   @override
+  ConsumerState<_ManualAddCard> createState() => _ManualAddCardState();
+}
+
+class _ManualAddCardState extends ConsumerState<_ManualAddCard> {
+  static const _groupSuggestions = <String>[
+    '影视',
+    '动漫',
+    '综艺',
+    '少儿',
+    '纪录片',
+    '4K',
+    '短剧',
+    'R18',
+  ];
+
+  final _formKey = GlobalKey<FormState>();
+  final _keyCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _apiCtrl = TextEditingController();
+  final _detailCtrl = TextEditingController();
+  final _commentCtrl = TextEditingController();
+
+  String? _group;
+  bool _r18 = false;
+  bool _submitting = false;
+  bool _keyTouchedByUser = false;
+  bool _detailTouchedByUser = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiCtrl.addListener(_onApiChanged);
+    _keyCtrl.addListener(() {
+      if (_keyCtrl.text.isNotEmpty) _keyTouchedByUser = true;
+    });
+    _detailCtrl.addListener(() {
+      if (_detailCtrl.text.isNotEmpty) _detailTouchedByUser = true;
+    });
+  }
+
+  @override
+  void dispose() {
+    _keyCtrl.dispose();
+    _nameCtrl.dispose();
+    _apiCtrl.dispose();
+    _detailCtrl.dispose();
+    _commentCtrl.dispose();
+    super.dispose();
+  }
+
+  /// API 输入时尝试补全 key 与 detail（仅在用户没手动改过的前提下）
+  void _onApiChanged() {
+    final api = _apiCtrl.text.trim();
+    if (api.isEmpty) return;
+    final uri = Uri.tryParse(api);
+    if (uri == null || uri.host.isEmpty) return;
+
+    final inferredKey = uri.host;
+    final inferredDetail = '${uri.scheme}://${uri.host}';
+
+    setState(() {
+      if (!_keyTouchedByUser) _keyCtrl.text = inferredKey;
+      if (!_detailTouchedByUser) _detailCtrl.text = inferredDetail;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('手动添加', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text('手动输入片源的标识、名称、API 地址和详情地址。', style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 16),
-            FilledButton.tonalIcon(
-              onPressed: onAdded,
-              icon: const Icon(Icons.add_link_rounded),
-              label: const Text('手动添加片源'),
-            ),
-          ],
+        child: Form(
+          key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '手动添加',
+                style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '直接填表添加单个片源。系统会根据 API 地址自动补全标识与详情地址。',
+                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _apiCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'API 地址 *',
+                  hintText: 'https://example.com/api.php/provide/vod',
+                  prefixIcon: Icon(Icons.link_rounded),
+                ),
+                keyboardType: TextInputType.url,
+                validator: _validateUrl,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: '片源名称 *',
+                  hintText: '如：🎬-爱奇艺-',
+                  prefixIcon: Icon(Icons.label_rounded),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? '名称不能为空'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _keyCtrl,
+                decoration: InputDecoration(
+                  labelText: '片源标识 *',
+                  hintText: '通常为 API 域名',
+                  prefixIcon: const Icon(Icons.key_rounded),
+                  helperText: '唯一标识，重复会无法添加',
+                  suffixIcon: _keyCtrl.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: '清空',
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () {
+                            setState(() {
+                              _keyCtrl.clear();
+                              _keyTouchedByUser = false;
+                              _onApiChanged();
+                            });
+                          },
+                        ),
+                ),
+                validator: _validateKey,
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _detailCtrl,
+                decoration: const InputDecoration(
+                  labelText: '详情地址 *',
+                  hintText: '通常是 API 站的主页',
+                  prefixIcon: Icon(Icons.public_rounded),
+                ),
+                keyboardType: TextInputType.url,
+                validator: _validateUrl,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '分组（可选）',
+                style: tt.labelLarge?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final option in _groupSuggestions)
+                    ChoiceChip(
+                      label: Text(option),
+                      selected: _group == option,
+                      onSelected: (_) => setState(() {
+                        _group = _group == option ? null : option;
+                        if (option == 'R18') _r18 = true;
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _commentCtrl,
+                decoration: const InputDecoration(
+                  labelText: '备注（可选）',
+                  hintText: '比如来源、稳定度等',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _r18,
+                onChanged: (v) => setState(() => _r18 = v),
+                title: const Text('标记为成人内容'),
+                subtitle: const Text('仅用于本地分组与提醒'),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: _submitting ? null : _resetForm,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('清空表单'),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: _submitting ? null : _submit,
+                    icon: _submitting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_rounded),
+                    label: Text(_submitting ? '添加中...' : '添加片源'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  String? _validateUrl(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return '不能为空';
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      return '需要完整的 http(s):// 地址';
+    }
+    return null;
+  }
+
+  String? _validateKey(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return '不能为空';
+    if (widget.existingSourceKeys.contains(text)) {
+      return '已存在同名片源标识';
+    }
+    if (RegExp(r'\s').hasMatch(text)) {
+      return '不要包含空格';
+    }
+    return null;
+  }
+
+  void _resetForm() {
+    _formKey.currentState?.reset();
+    _keyCtrl.clear();
+    _nameCtrl.clear();
+    _apiCtrl.clear();
+    _detailCtrl.clear();
+    _commentCtrl.clear();
+    setState(() {
+      _group = null;
+      _r18 = false;
+      _keyTouchedByUser = false;
+      _detailTouchedByUser = false;
+    });
+  }
+
+  Future<void> _submit() async {
+    final form = _formKey.currentState;
+    if (form == null || !form.validate()) {
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await ref.read(sourcesRepositoryProvider).addSource(
+            AddSourceRequest(
+              key: _keyCtrl.text.trim(),
+              name: _nameCtrl.text.trim(),
+              api: _apiCtrl.text.trim(),
+              detail: _detailCtrl.text.trim(),
+              group: _group,
+              comment: _commentCtrl.text.trim().isEmpty
+                  ? null
+                  : _commentCtrl.text.trim(),
+              r18: _r18,
+            ),
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已添加：${_nameCtrl.text.trim()}')),
+      );
+      widget.onAdded();
+      _resetForm();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('添加失败：$error')),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 }
 

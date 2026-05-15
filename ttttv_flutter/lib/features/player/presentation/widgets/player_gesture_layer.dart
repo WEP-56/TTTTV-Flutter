@@ -1,72 +1,86 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 
-/// 触摸手势层。
+/// 移动端触摸手势层（参考 Bilibili / YouTube 逻辑）。
 ///
-/// 只在移动端启用，参考 Kazumi/Bilibili 等：
-/// - 单击：切换控件可见性
-/// - 双击：左侧后退 / 中间播放暂停 / 右侧前进
-/// - 长按：2 倍速播放（松开恢复）
-/// - 水平拖动：进度预览，松手 seek
-/// - 垂直拖动：左侧亮度（暂未接入系统 API，仅占位提示），右侧音量
-class PlayerGestureLayer extends StatefulWidget {
-  const PlayerGestureLayer({
+/// 这个层放在控件层**之上**，拦截全局手势：
+/// - 单击：切换控件显隐
+/// - 双击：左 -10s / 中暂停 / 右 +10s
+/// - 长按：隐藏控件 + 临时 2× 倍速（松开恢复）
+/// - 水平拖动：全局 seek 预览（不受控件显隐影响）
+/// - 垂直拖动右半屏：音量
+/// - 垂直拖动左半屏：亮度
+///
+/// 桌面端不使用此层，改用 [DesktopHoverDetector]。
+class MobileGestureLayer extends StatefulWidget {
+  const MobileGestureLayer({
     required this.player,
     required this.volume,
-    required this.playbackSpeed,
-    required this.enableTouchGestures,
-    required this.onTapStage,
+    required this.onTapToggleControls,
     required this.onSeek,
     required this.onTogglePlayPause,
     required this.onVolumeChanged,
+    required this.onBrightnessChanged,
     required this.onTemporarySpeed,
+    required this.onHideControls,
+    required this.brightness,
     super.key,
   });
 
   final Player player;
   final double volume;
-  final double playbackSpeed;
-  final bool enableTouchGestures;
-  final VoidCallback onTapStage;
+  final double brightness;
+  final VoidCallback onTapToggleControls;
   final ValueChanged<Duration> onSeek;
   final Future<void> Function() onTogglePlayPause;
   final ValueChanged<double> onVolumeChanged;
+  final ValueChanged<double> onBrightnessChanged;
 
-  /// 回调：true 进入临时倍速（按住），false 恢复
+  /// 回调：true 进入临时倍速，false 恢复
   final ValueChanged<bool> onTemporarySpeed;
 
+  /// 长按开始时先隐藏控件
+  final VoidCallback onHideControls;
+
   @override
-  State<PlayerGestureLayer> createState() => _PlayerGestureLayerState();
+  State<MobileGestureLayer> createState() => _MobileGestureLayerState();
 }
 
 enum _DragMode { none, horizontalSeek, verticalVolume, verticalBrightness }
 
-class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
+class _MobileGestureLayerState extends State<MobileGestureLayer> {
   static const _doubleTapStep = Duration(seconds: 10);
+  static const _doubleTapWindow = Duration(milliseconds: 300);
 
   _DragMode _dragMode = _DragMode.none;
   Duration _seekPreviewStart = Duration.zero;
   Duration _seekPreviewTarget = Duration.zero;
   double _volumeStart = 0;
+  double _brightnessStart = 0;
   double _verticalAccum = 0;
   double _horizontalAccum = 0;
   double _stageWidth = 0;
   double _stageHeight = 0;
   bool _showSeekPreview = false;
   bool _showVolumePreview = false;
+  bool _showBrightnessPreview = false;
 
-  // 双击区域指示
+  // 双击检测
   _DoubleTapHint? _doubleTapHint;
   Timer? _doubleTapHintTimer;
-  Timer? _longPressActiveTimer;
   bool _longPressActive = false;
+
+  // 单击 vs 双击区分
+  Timer? _singleTapTimer;
+  bool _waitingForDoubleTap = false;
 
   @override
   void dispose() {
     _doubleTapHintTimer?.cancel();
-    _longPressActiveTimer?.cancel();
+    _singleTapTimer?.cancel();
     super.dispose();
   }
 
@@ -75,15 +89,6 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.enableTouchGestures) {
-      // 桌面：仅处理点击切换控件
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTapStage,
-        child: const SizedBox.expand(),
-      );
-    }
-
     return LayoutBuilder(
       builder: (context, constraints) {
         _stageWidth = constraints.maxWidth;
@@ -92,10 +97,8 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
           fit: StackFit.expand,
           children: [
             GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.onTapStage,
-              onDoubleTapDown: _handleDoubleTapDown,
-              onDoubleTap: _handleDoubleTap,
+              behavior: HitTestBehavior.translucent,
+              onTapUp: _handleTapUp,
               onLongPressStart: _handleLongPressStart,
               onLongPressEnd: _handleLongPressEnd,
               onHorizontalDragStart: _handleHorizontalStart,
@@ -108,6 +111,7 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
             ),
             if (_showSeekPreview) _buildSeekPreview(),
             if (_showVolumePreview) _buildVolumePreview(),
+            if (_showBrightnessPreview) _buildBrightnessPreview(),
             if (_doubleTapHint != null) _buildDoubleTapHint(),
             if (_longPressActive) _buildLongPressHint(),
           ],
@@ -116,14 +120,29 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
     );
   }
 
-  // -------- 双击 --------
-  Offset _doubleTapPosition = Offset.zero;
-  void _handleDoubleTapDown(TapDownDetails details) {
-    _doubleTapPosition = details.localPosition;
+  // -------- 单击 vs 双击 --------
+  void _handleTapUp(TapUpDetails details) {
+    final position = details.localPosition;
+
+    if (_waitingForDoubleTap) {
+      // 这是双击的第二下
+      _singleTapTimer?.cancel();
+      _waitingForDoubleTap = false;
+      _handleDoubleTap(position);
+      return;
+    }
+
+    // 记录位置，等待可能的双击
+    _waitingForDoubleTap = true;
+    _singleTapTimer = Timer(_doubleTapWindow, () {
+      _waitingForDoubleTap = false;
+      // 超时没有第二下 → 单击
+      widget.onTapToggleControls();
+    });
   }
 
-  void _handleDoubleTap() {
-    final dx = _doubleTapPosition.dx;
+  void _handleDoubleTap(Offset position) {
+    final dx = position.dx;
     final third = _stageWidth / 3;
     if (dx < third) {
       _seekBy(-_doubleTapStep);
@@ -132,6 +151,7 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
       _seekBy(_doubleTapStep);
       _showHint(_DoubleTapHint.forward);
     } else {
+      // 中间区域：暂停/播放
       unawaited(widget.onTogglePlayPause());
     }
   }
@@ -159,9 +179,10 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
 
   // -------- 长按 2x --------
   void _handleLongPressStart(LongPressStartDetails _) {
-    _longPressActiveTimer?.cancel();
     _longPressActive = true;
+    widget.onHideControls();
     widget.onTemporarySpeed(true);
+    HapticFeedback.mediumImpact();
     if (mounted) setState(() {});
   }
 
@@ -171,12 +192,13 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
     if (mounted) setState(() {});
   }
 
-  // -------- 水平拖动 = 进度 --------
+  // -------- 水平拖动 = 进度（全局生效） --------
   void _handleHorizontalStart(DragStartDetails details) {
     _dragMode = _DragMode.horizontalSeek;
     _horizontalAccum = 0;
     _seekPreviewStart = _currentPosition;
     _seekPreviewTarget = _currentPosition;
+    widget.onHideControls();
     setState(() => _showSeekPreview = true);
   }
 
@@ -185,7 +207,6 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
     _horizontalAccum += details.delta.dx;
     final duration = _currentDuration;
     if (duration == Duration.zero || _stageWidth == 0) return;
-    // 全屏宽 = 整个时长的 75%（更可控）
     final ratio = _horizontalAccum / _stageWidth;
     final deltaMs = (ratio * duration.inMilliseconds * 0.75).round();
     final next = _seekPreviewStart + Duration(milliseconds: deltaMs);
@@ -203,35 +224,48 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
     setState(() => _showSeekPreview = false);
   }
 
-  // -------- 垂直拖动 = 音量（右侧） --------
+  // -------- 垂直拖动 --------
   void _handleVerticalStart(DragStartDetails details) {
     final dx = details.localPosition.dx;
     if (dx > _stageWidth / 2) {
       _dragMode = _DragMode.verticalVolume;
       _volumeStart = widget.volume;
       _verticalAccum = 0;
+      widget.onHideControls();
       setState(() => _showVolumePreview = true);
     } else {
-      // 左侧亮度暂时不接入系统 API；保持无操作
       _dragMode = _DragMode.verticalBrightness;
+      _brightnessStart = widget.brightness;
+      _verticalAccum = 0;
+      widget.onHideControls();
+      setState(() => _showBrightnessPreview = true);
     }
   }
 
   void _handleVerticalUpdate(DragUpdateDetails details) {
-    if (_dragMode != _DragMode.verticalVolume) return;
     _verticalAccum += details.delta.dy;
     if (_stageHeight == 0) return;
-    // 全屏高度 = 100% 音量
-    final next = (_volumeStart - _verticalAccum / _stageHeight * 100)
-        .clamp(0, 100)
-        .toDouble();
-    widget.onVolumeChanged(next);
-    setState(() {});
+
+    if (_dragMode == _DragMode.verticalVolume) {
+      final next = (_volumeStart - _verticalAccum / _stageHeight * 100)
+          .clamp(0, 100)
+          .toDouble();
+      widget.onVolumeChanged(next);
+      setState(() {});
+    } else if (_dragMode == _DragMode.verticalBrightness) {
+      final next = (_brightnessStart - _verticalAccum / _stageHeight * 1.0)
+          .clamp(0.0, 1.0);
+      widget.onBrightnessChanged(next);
+      setState(() {});
+    }
   }
 
   void _handleVerticalEnd(DragEndDetails details) {
     _dragMode = _DragMode.none;
-    setState(() => _showVolumePreview = false);
+    setState(() {
+      _showVolumePreview = false;
+      _showBrightnessPreview = false;
+    });
   }
 
   // -------- 浮层 --------
@@ -243,7 +277,9 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
     final secs = absMs ~/ 1000;
     final mins = secs ~/ 60;
     final remSec = secs % 60;
-    final deltaText = mins > 0 ? '$sign$mins:${remSec.toString().padLeft(2, '0')}' : '$sign${secs}s';
+    final deltaText = mins > 0
+        ? '$sign$mins:${remSec.toString().padLeft(2, '0')}'
+        : '$sign${secs}s';
 
     return Center(
       child: Container(
@@ -267,7 +303,9 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
             Text(
               deltaText,
               style: TextStyle(
-                color: delta.isNegative ? Colors.lightBlueAccent : Colors.amberAccent,
+                color: delta.isNegative
+                    ? Colors.lightBlueAccent
+                    : Colors.amberAccent,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -309,6 +347,49 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
             const SizedBox(height: 6),
             Text(
               '${volume.round()}%',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBrightnessPreview() {
+    final brightness = widget.brightness.clamp(0.0, 1.0);
+    final icon = brightness < 0.3
+        ? Icons.brightness_low_rounded
+        : brightness < 0.7
+            ? Icons.brightness_medium_rounded
+            : Icons.brightness_high_rounded;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 32),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: 120,
+              child: LinearProgressIndicator(
+                value: brightness,
+                backgroundColor: Colors.white24,
+                color: Colors.amberAccent,
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${(brightness * 100).round()}%',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,
@@ -376,12 +457,139 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
               SizedBox(width: 4),
               Text(
                 '2.0x 快进中',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 桌面端鼠标悬停 + 点击检测。
+///
+/// 分为两个 widget 配合使用：
+/// - [DesktopHoverDetector]：放在 Stack 最顶层，只做 MouseRegion 悬停检测，
+///   不拦截任何点击。
+/// - [DesktopClickDetector]：放在控件层**下面**（视频面之上），用 opaque
+///   GestureDetector 接收点击。当控件可见时，控件层的按钮/进度条在更上层
+///   会先消费事件，点击不会到达这里；只有点击到空白区域时才触发。
+class DesktopHoverDetector extends StatefulWidget {
+  const DesktopHoverDetector({
+    required this.onShowControls,
+    required this.onHideControls,
+    this.idleTimeout = const Duration(milliseconds: 1500),
+    super.key,
+  });
+
+  final VoidCallback onShowControls;
+  final VoidCallback onHideControls;
+  final Duration idleTimeout;
+
+  @override
+  State<DesktopHoverDetector> createState() => _DesktopHoverDetectorState();
+}
+
+class _DesktopHoverDetectorState extends State<DesktopHoverDetector> {
+  Timer? _idleTimer;
+  bool _mouseInside = false;
+
+  @override
+  void dispose() {
+    _idleTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onEnter(PointerEvent _) {
+    _mouseInside = true;
+    widget.onShowControls();
+    _resetIdleTimer();
+  }
+
+  void _onExit(PointerEvent _) {
+    _mouseInside = false;
+    _idleTimer?.cancel();
+    widget.onHideControls();
+  }
+
+  void _onHover(PointerEvent _) {
+    if (!_mouseInside) return;
+    widget.onShowControls();
+    _resetIdleTimer();
+  }
+
+  void _resetIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(widget.idleTimeout, () {
+      if (_mouseInside) {
+        widget.onHideControls();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      opaque: false,
+      hitTestBehavior: HitTestBehavior.translucent,
+      onEnter: _onEnter,
+      onExit: _onExit,
+      onHover: _onHover,
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+/// 桌面端点击检测层。放在控件层**下面**。
+///
+/// - 单击空白区域：播放/暂停
+/// - 双击空白区域：切换全屏
+class DesktopClickDetector extends StatefulWidget {
+  const DesktopClickDetector({
+    required this.onTogglePlayPause,
+    required this.onToggleFullscreen,
+    super.key,
+  });
+
+  final Future<void> Function() onTogglePlayPause;
+  final Future<void> Function() onToggleFullscreen;
+
+  @override
+  State<DesktopClickDetector> createState() => _DesktopClickDetectorState();
+}
+
+class _DesktopClickDetectorState extends State<DesktopClickDetector> {
+  Timer? _singleClickTimer;
+  static const _doubleClickWindow = Duration(milliseconds: 300);
+
+  @override
+  void dispose() {
+    _singleClickTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    if (_singleClickTimer != null) {
+      // 双击
+      _singleClickTimer!.cancel();
+      _singleClickTimer = null;
+      unawaited(widget.onToggleFullscreen());
+    } else {
+      _singleClickTimer = Timer(_doubleClickWindow, () {
+        _singleClickTimer = null;
+        unawaited(widget.onTogglePlayPause());
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _handleTap,
+      child: const SizedBox.expand(),
     );
   }
 }

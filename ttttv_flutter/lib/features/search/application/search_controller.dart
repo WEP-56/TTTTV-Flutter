@@ -53,7 +53,7 @@ class SearchController extends StateNotifier<SearchState> {
 
   final SearchRepository _repository;
 
-  Future<void> search(String query, {bool bypass = false}) async {
+  Future<void> search(String query, {bool bypass = false, Set<String>? sourceKeys}) async {
     final normalized = query.trim();
     if (normalized.isEmpty) {
       return;
@@ -72,6 +72,7 @@ class SearchController extends StateNotifier<SearchState> {
       final result = await _repository.search(
         normalized,
         bypass: bypass,
+        sourceKeys: sourceKeys,
         onBatch: (batch) {
           accumulated.addAll(batch);
           state = state.copyWith(results: [...accumulated]);
