@@ -2,17 +2,45 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
+/// 本地 HLS 代理服务器。
+///
+/// 改进点（相对旧实现）：
+/// - 共享一个 [HttpClient] 实例，复用 socket / TLS / DNS，
+///   消除"每个 segment 都重新握手"造成的间歇性卡顿
+/// - 缓存键加入 headers hash，避免不同 Referer 间的串味
+/// - 区分点播 (`#EXT-X-ENDLIST`) 与直播：
+///   点播 playlist 缓存 3 分钟，直播完全不缓存
+/// - 客户端断开（拖进度条、关播放器）时，主动中止上游请求
 class LocalMediaProxy {
   LocalMediaProxy._();
 
   static final LocalMediaProxy instance = LocalMediaProxy._();
 
-  static const _playlistCacheTtl = Duration(minutes: 5);
-  static const _maxCachedPlaylists = 50;
+  static const _vodPlaylistTtl = Duration(minutes: 3);
+  static const _maxCachedPlaylists = 64;
   final Map<String, _CachedPlaylist> _playlistCache = {};
 
   HttpServer? _server;
   Future<HttpServer>? _starting;
+
+  /// 共享给所有上游请求的 HttpClient。Dart 的 [HttpClient] 默认开启
+  /// keep-alive；只要不被释放就会复用底层连接，对 HLS 的反复小请求
+  /// 收益巨大。
+  HttpClient? _sharedClient;
+
+  HttpClient get _httpClient {
+    final existing = _sharedClient;
+    if (existing != null) return existing;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15)
+      ..idleTimeout = const Duration(seconds: 30)
+      ..maxConnectionsPerHost = 8
+      ..autoUncompress = true;
+    _sharedClient = client;
+    return client;
+  }
 
   Future<String> createHlsProxyUrl({
     required String url,
@@ -54,7 +82,9 @@ class LocalMediaProxy {
               try {
                 request.response.statusCode = HttpStatus.internalServerError;
               } catch (_) {}
-              await request.response.close();
+              try {
+                await request.response.close();
+              } catch (_) {}
             }
           }),
         );
@@ -107,27 +137,26 @@ class LocalMediaProxy {
     required Uri uri,
     required Map<String, String> headers,
   }) async {
-    final cacheKey = uri.toString();
+    final cacheKey = _playlistCacheKey(uri, headers);
 
     final cached = _playlistCache[cacheKey];
     if (cached != null && cached.expiresAt.isAfter(DateTime.now())) {
-      request.response.statusCode = HttpStatus.ok;
-      request.response.headers.contentType = ContentType(
-        'application',
-        'vnd.apple.mpegurl',
-        charset: 'utf-8',
-      );
-      request.response.write(cached.content);
+      _writePlaylistResponse(request.response, cached.content);
       await request.response.close();
       return;
     }
 
-    final response = await _fetchUpstream(
+    final upstream = await _fetchUpstream(
       request,
       uri: uri,
       headers: headers,
     );
-    final body = await utf8.decodeStream(response);
+    if (upstream == null) {
+      // 已经写过错误状态码，不再处理
+      return;
+    }
+
+    final body = await utf8.decodeStream(upstream);
     final rewritten = _rewritePlaylist(
       body,
       baseUri: uri,
@@ -135,16 +164,40 @@ class LocalMediaProxy {
       headers: headers,
     );
 
-    _cachePlaylist(cacheKey, rewritten);
+    // 只有点播（含 ENDLIST）才缓存，直播流不缓存
+    if (_isVodPlaylist(rewritten)) {
+      _cachePlaylist(cacheKey, rewritten);
+    }
 
-    request.response.statusCode = HttpStatus.ok;
-    request.response.headers.contentType = ContentType(
+    _writePlaylistResponse(request.response, rewritten);
+    await request.response.close();
+  }
+
+  void _writePlaylistResponse(HttpResponse response, String content) {
+    response.statusCode = HttpStatus.ok;
+    response.headers.contentType = ContentType(
       'application',
       'vnd.apple.mpegurl',
       charset: 'utf-8',
     );
-    request.response.write(rewritten);
-    await request.response.close();
+    // playlist 体积小，禁用任何中间缓存，避免 mediakit 复用过期 playlist
+    response.headers
+        .set(HttpHeaders.cacheControlHeader, 'no-store, max-age=0');
+    response.write(content);
+  }
+
+  String _playlistCacheKey(Uri uri, Map<String, String> headers) {
+    final headerSignature = headers.entries
+        .map((e) => '${e.key.toLowerCase()}=${e.value}')
+        .toList()
+      ..sort();
+    final raw = '${uri.toString()}|${headerSignature.join('&')}';
+    final digest = md5.convert(utf8.encode(raw));
+    return digest.toString();
+  }
+
+  bool _isVodPlaylist(String content) {
+    return content.contains('#EXT-X-ENDLIST');
   }
 
   void _cachePlaylist(String key, String content) {
@@ -157,7 +210,7 @@ class LocalMediaProxy {
     }
     _playlistCache[key] = _CachedPlaylist(
       content: content,
-      expiresAt: DateTime.now().add(_playlistCacheTtl),
+      expiresAt: DateTime.now().add(_vodPlaylistTtl),
     );
   }
 
@@ -166,45 +219,111 @@ class LocalMediaProxy {
     required Uri uri,
     required Map<String, String> headers,
   }) async {
-    final response = await _fetchUpstream(
+    final upstream = await _fetchUpstream(
       request,
       uri: uri,
       headers: headers,
     );
+    if (upstream == null) return;
 
-    request.response.statusCode = response.statusCode;
-    final contentType = response.headers.contentType;
+    request.response.statusCode = upstream.statusCode;
+
+    final contentType = upstream.headers.contentType;
     if (contentType != null) {
       request.response.headers.contentType = contentType;
     }
-    final contentLength = response.headers.contentLength;
-    if (contentLength >= 0) {
+    // 如果上游被自动解压（Content-Encoding 不为空），原始 Content-Length 已失真，
+    // 直接转发会导致 mediakit 等待错误的字节数 → 永久缓冲。改用分块编码。
+    final wasCompressed =
+        upstream.headers.value(HttpHeaders.contentEncodingHeader) != null;
+    final contentLength = upstream.headers.contentLength;
+    if (!wasCompressed && contentLength >= 0) {
       request.response.headers.contentLength = contentLength;
     }
+    final acceptRanges = upstream.headers.value(HttpHeaders.acceptRangesHeader);
+    if (acceptRanges != null) {
+      request.response.headers
+          .set(HttpHeaders.acceptRangesHeader, acceptRanges);
+    }
+    final contentRange =
+        upstream.headers.value(HttpHeaders.contentRangeHeader);
+    if (contentRange != null) {
+      request.response.headers
+          .set(HttpHeaders.contentRangeHeader, contentRange);
+    }
 
-    await response.pipe(request.response);
+    // 客户端断开（拖动进度条、切换分辨率）时主动中止上游
+    StreamSubscription<List<int>>? subscription;
+    final completer = Completer<void>();
+    subscription = upstream.listen(
+      (chunk) {
+        try {
+          request.response.add(chunk);
+        } catch (error) {
+          subscription?.cancel();
+          if (!completer.isCompleted) completer.completeError(error);
+        }
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!completer.isCompleted) completer.completeError(error, stack);
+      },
+      cancelOnError: true,
+    );
+
+    unawaited(
+      request.response.done.catchError((Object _) {
+        // 客户端断开时取消订阅，HttpClient 会自动释放连接
+        subscription?.cancel();
+      }),
+    );
+
+    try {
+      await completer.future;
+    } catch (_) {
+      // 上游中断或客户端断开，吞掉异常
+    } finally {
+      try {
+        await request.response.close();
+      } catch (_) {}
+    }
   }
 
-  Future<HttpClientResponse> _fetchUpstream(
+  Future<HttpClientResponse?> _fetchUpstream(
     HttpRequest request, {
     required Uri uri,
     required Map<String, String> headers,
   }) async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 15);
+    final HttpClientRequest upstream;
+    try {
+      upstream = await _httpClient.getUrl(uri);
+    } catch (error) {
+      request.response.statusCode = HttpStatus.badGateway;
+      await request.response.close();
+      return null;
+    }
 
-    final upstream = await client.getUrl(uri);
     headers.forEach(upstream.headers.set);
     _copyRequestHeader(request, upstream, HttpHeaders.rangeHeader);
     _copyRequestHeader(request, upstream, HttpHeaders.acceptHeader);
     _copyRequestHeader(request, upstream, HttpHeaders.acceptEncodingHeader);
 
-    final response = await upstream.close();
+    HttpClientResponse response;
+    try {
+      response = await upstream.close();
+    } catch (error) {
+      request.response.statusCode = HttpStatus.badGateway;
+      await request.response.close();
+      return null;
+    }
+
     if (response.statusCode >= 400) {
       request.response.statusCode = response.statusCode;
       await response.drain<void>();
       await request.response.close();
-      throw HttpException('Upstream failed: ${response.statusCode}', uri: uri);
+      return null;
     }
     return response;
   }

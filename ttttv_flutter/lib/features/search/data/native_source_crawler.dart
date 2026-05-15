@@ -5,6 +5,20 @@ import 'package:dio/dio.dart';
 import '../../../core/models/vod_models.dart';
 import '../../settings/data/local_sources_store.dart';
 
+/// 一次站点搜索的结果，附带服务端返回的总页数（如果有）。
+class CrawlerSearchResult {
+  const CrawlerSearchResult({
+    required this.items,
+    this.pageCount,
+  });
+
+  final List<VodItem> items;
+
+  /// 服务端 (apple cms) 返回的总页数，无值时表示未知，
+  /// 调用方在分页前应回退到 1（不再盲扫）。
+  final int? pageCount;
+}
+
 class NativeSourceCrawler {
   NativeSourceCrawler({required Dio dio}) : _dio = dio;
 
@@ -17,11 +31,12 @@ class NativeSourceCrawler {
     r'(https?://[^\s]+?\.m3u8[^\s]*)',
   );
 
-  Future<List<VodItem>> search(
+  Future<CrawlerSearchResult> search(
     LocalVodSource source,
     String keyword, {
     int page = 1,
     List<String> restrictedCategories = const [],
+    CancelToken? cancelToken,
   }) async {
     final response = await _fetchVodList(
       source.apiUrl,
@@ -30,19 +45,30 @@ class NativeSourceCrawler {
         'pg': page.toString(),
         'wd': keyword,
       },
+      cancelToken: cancelToken,
     );
-    return response.map((item) => _mapToVodItem(item, source)).where((item) {
+
+    final pageCount = _readPageCount(response.raw);
+    final items = response.list
+        .map((item) => _mapToVodItem(item, source))
+        .where((item) {
       final typeName = item.typeName;
       if (typeName == null || restrictedCategories.isEmpty) {
         return true;
       }
       return !restrictedCategories.any(typeName.contains);
     }).toList(growable: false);
+
+    return CrawlerSearchResult(items: items, pageCount: pageCount);
   }
 
-  Future<VodItem> getDetail(LocalVodSource source, String vodId) async {
+  Future<VodItem> getDetail(
+    LocalVodSource source,
+    String vodId, {
+    CancelToken? cancelToken,
+  }) async {
     if (source.hasCustomDetail) {
-      return _handleHtmlDetail(source, vodId);
+      return _handleHtmlDetail(source, vodId, cancelToken: cancelToken);
     }
 
     final response = await _fetchVodList(
@@ -51,20 +77,26 @@ class NativeSourceCrawler {
         'ac': 'videolist',
         'ids': vodId,
       },
+      cancelToken: cancelToken,
     );
-    final detail = response.firstOrNull;
+    final detail = response.list.firstOrNull;
     if (detail == null) {
       throw StateError('未找到影视详情');
     }
     return _mapToVodItem(detail, source);
   }
 
-  Future<VodItem> _handleHtmlDetail(LocalVodSource source, String vodId) async {
+  Future<VodItem> _handleHtmlDetail(
+    LocalVodSource source,
+    String vodId, {
+    CancelToken? cancelToken,
+  }) async {
     final detailUrl = source.detailUrl;
     final url = '$detailUrl/index.php/vod/detail/id/$vodId.html';
 
     final response = await _dio.getUri<String>(
       Uri.parse(url),
+      cancelToken: cancelToken,
       options: Options(
         responseType: ResponseType.plain,
         receiveTimeout: const Duration(seconds: 10),
@@ -139,12 +171,14 @@ class NativeSourceCrawler {
         .trim();
   }
 
-  Future<List<Map<String, dynamic>>> _fetchVodList(
+  Future<_VodListResponse> _fetchVodList(
     String baseUrl, {
     required Map<String, String> queryParameters,
+    CancelToken? cancelToken,
   }) async {
     final response = await _dio.getUri<Object>(
       _buildVodApiUri(baseUrl, queryParameters),
+      cancelToken: cancelToken,
     );
     final json = _toJsonMap(response.data);
     final code = _readResponseCode(json['code']);
@@ -153,13 +187,19 @@ class NativeSourceCrawler {
       throw StateError(message);
     }
     final list = json['list'];
-    if (list is! List) {
-      return const [];
-    }
-    return list
-        .whereType<Map>()
-        .map((item) => item.cast<String, dynamic>())
-        .toList(growable: false);
+    final items = list is List
+        ? list
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    return _VodListResponse(raw: json, list: items);
+  }
+
+  int? _readPageCount(Map<String, dynamic> json) {
+    final raw = json['pagecount'] ?? json['pageCount'] ?? json['page_count'];
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '');
   }
 
   VodItem _mapToVodItem(Map<String, dynamic> item, LocalVodSource source) {
@@ -201,6 +241,12 @@ class NativeSourceCrawler {
   bool _hasM3u8(String text) {
     return text.toLowerCase().contains('.m3u8');
   }
+}
+
+class _VodListResponse {
+  const _VodListResponse({required this.raw, required this.list});
+  final Map<String, dynamic> raw;
+  final List<Map<String, dynamic>> list;
 }
 
 Uri _buildVodApiUri(

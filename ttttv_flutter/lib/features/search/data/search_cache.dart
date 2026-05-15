@@ -16,8 +16,14 @@ class CachedPageEntry {
   final int? pageCount;
 }
 
+/// 搜索结果缓存。
+///
+/// - 成功 (`ok`)：TTL 10 分钟，避免反复打同一个站
+/// - 失败 (`timeout` / `forbidden`)：TTL 2 分钟，做短期负缓存，
+///   保证连续搜同一个词不会反复触发同一个站的失败请求
 class SearchCache {
-  static const _ttl = Duration(minutes: 10);
+  static const _okTtl = Duration(minutes: 10);
+  static const _negativeTtl = Duration(minutes: 2);
   static const _maxEntries = 1000;
   final Map<String, CachedPageEntry> _cache = {};
 
@@ -44,9 +50,10 @@ class SearchCache {
     int? pageCount,
   }) {
     _evictIfNeeded();
+    final ttl = status == CachedPageStatus.ok ? _okTtl : _negativeTtl;
     final key = _key(sourceKey, query.trim(), page);
     _cache[key] = CachedPageEntry(
-      expiresAt: DateTime.now().add(_ttl),
+      expiresAt: DateTime.now().add(ttl),
       status: status,
       data: data,
       pageCount: pageCount,

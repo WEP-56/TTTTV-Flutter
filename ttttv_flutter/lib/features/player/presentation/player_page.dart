@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,8 +13,17 @@ import '../../../core/providers.dart';
 import '../../history/domain/history_repository.dart';
 import 'widgets/player_controls_overlay.dart';
 import 'widgets/player_episode_panel.dart';
+import 'widgets/player_gesture_layer.dart';
 import 'widgets/player_video_surface.dart';
 
+/// 播放器页面（重写版）
+///
+/// 设计参考 Kazumi / Bilibili / YouTube 等成熟播放器：
+/// - 视频铺满整个舞台，无固定侧边面板
+/// - 选集 / 线路抽屉从右侧滑入
+/// - 移动端进入页面自动横屏 + 沉浸式
+/// - 安卓端启用完整触摸手势
+/// - 桌面端保留键盘快捷键
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({
     required this.detail,
@@ -37,16 +45,15 @@ class PlayerPage extends ConsumerStatefulWidget {
 }
 
 class _PlayerPageState extends ConsumerState<PlayerPage> {
-  static const Duration _controlsHideDelay = Duration(seconds: 3);
+  static const Duration _controlsHideDelay = Duration(seconds: 4);
   static const Duration _seekStep = Duration(seconds: 10);
   static const Duration _seekRecoveryDelay = Duration(seconds: 8);
   static const Duration _seekCompletionTolerance = Duration(seconds: 2);
   static const Duration _minProgressPersistence = Duration(seconds: 30);
-  static const double _panelMinWidth = 280;
-  static const double _panelMaxWidth = 420;
-  static const double _fullscreenPanelWidth = 360;
+  static const double _drawerWidth = 340;
   static const double _volumeStep = 5;
   static const List<double> _speedOptions = <double>[
+    0.5,
     0.75,
     1.0,
     1.25,
@@ -73,15 +80,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _showControls = true;
   bool _isFullscreen = false;
   bool _isFullscreenTransitioning = false;
-  bool _showFullscreenPanel = false;
-  bool _panelCollapsed = false;
-  double _panelWidth = 320;
+  bool _drawerOpen = false;
   double _playbackSpeed = 1.0;
+  double _temporarySpeedSaved = 1.0;
+  bool _temporarySpeedActive = false;
   double _volume = 100.0;
   int _fitMode = 0;
   String? _loadError;
   Timer? _hideTimer;
-  Timer? _fullscreenPanelCloseTimer;
   Timer? _seekRecoveryTimer;
   String? _lastPersistSignature;
   bool _isBuffering = false;
@@ -91,6 +97,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Duration? _pendingSeekTarget;
   int _seekGeneration = 0;
   bool _wakelockEnabled = false;
+  bool _mobileOrientationApplied = false;
 
   PlayEpisode get _currentEpisode =>
       widget.playResult.sources[_sourceIndex].episodes[_episodeIndex];
@@ -111,6 +118,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   bool get _canPlayPrevious => _episodeIndex > 0;
   bool get _canPlayNext => _episodeIndex < _currentSource.episodes.length - 1;
+
+  /// 移动端的"沉浸式播放"：进入页面默认就是全屏 + 横屏
+  bool get _isMobile => isMobilePlatform;
 
   @override
   void initState() {
@@ -135,7 +145,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
     _fullscreenBinding.attach();
     _keyboardFocusNode.requestFocus();
-    unawaited(_syncFullscreenState());
+
+    if (_isMobile) {
+      _applyMobilePlayerOrientation();
+    } else {
+      unawaited(_syncFullscreenState());
+    }
+
     unawaited(_player.setVolume(_volume));
     unawaited(_loadEpisode(startAtSeconds: widget.initialProgress));
     _startHideTimer();
@@ -145,7 +161,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void dispose() {
     _fullscreenBinding.detach();
     _hideTimer?.cancel();
-    _fullscreenPanelCloseTimer?.cancel();
     _seekRecoveryTimer?.cancel();
     _keyboardFocusNode.dispose();
     _playingSubscription.cancel();
@@ -154,11 +169,43 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _bufferSubscription.cancel();
     unawaited(_persistProgress());
     unawaited(_setKeepScreenAwake(false));
-    unawaited(_exitFullscreenIfNeeded());
+    if (_isMobile && _mobileOrientationApplied) {
+      unawaited(_restoreMobileOrientation());
+    } else {
+      unawaited(_exitFullscreenIfNeeded());
+    }
     unawaited(restorePlatformSystemUi());
     unawaited(_player.dispose());
     super.dispose();
   }
+
+  // ---------- 屏幕方向 / 沉浸式 ----------
+
+  Future<void> _applyMobilePlayerOrientation() async {
+    _mobileOrientationApplied = true;
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    if (mounted) {
+      setState(() {
+        _isFullscreen = true;
+      });
+    }
+  }
+
+  Future<void> _restoreMobileOrientation() async {
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  // ---------- 全屏（桌面） ----------
 
   void _handleEnteredFullscreen() {
     if (!mounted) return;
@@ -172,59 +219,140 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   void _handleExitedFullscreen() {
     if (!mounted) return;
-    _fullscreenPanelCloseTimer?.cancel();
     setState(() {
       _isFullscreen = false;
       _isFullscreenTransitioning = false;
-      _showFullscreenPanel = false;
       _showControls = true;
     });
     _startHideTimer();
   }
 
   Future<void> _syncFullscreenState() async {
-    if (!isDesktopPlatform) {
-      return;
-    }
-
+    if (!isDesktopPlatform) return;
     final fullscreen = await readPlatformFullscreen();
     if (!mounted) return;
     setState(() {
       _isFullscreen = fullscreen;
-      if (!fullscreen) {
-        _isFullscreenTransitioning = false;
-      }
+      if (!fullscreen) _isFullscreenTransitioning = false;
     });
   }
 
+  Future<void> _exitFullscreenIfNeeded() async {
+    if (!_isFullscreen) return;
+    if (isDesktopPlatform) {
+      await setPlatformFullscreen(false);
+    }
+  }
+
+  Future<void> _toggleFullscreen() async {
+    if (_isMobile) {
+      // 移动端：始终保持全屏沉浸式，按钮触发返回
+      await _handleBackPressed();
+      return;
+    }
+    await _setFullscreen(!_isFullscreen);
+  }
+
+  Future<void> _setFullscreen(bool fullscreen) async {
+    if (_isFullscreenTransitioning) return;
+    try {
+      setState(() => _isFullscreenTransitioning = true);
+      await setPlatformFullscreen(fullscreen);
+      if (isDesktopPlatform) {
+        await _syncFullscreenState();
+      } else if (mounted) {
+        setState(() {
+          _isFullscreen = fullscreen;
+          _isFullscreenTransitioning = false;
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isFullscreen = fullscreen;
+        _isFullscreenTransitioning = false;
+      });
+    }
+    _startHideTimer();
+  }
+
+  // ---------- 控件显隐 ----------
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    if (!_player.state.playing) return;
+    if (_drawerOpen) return;
+    _hideTimer = Timer(_controlsHideDelay, () {
+      if (!mounted) return;
+      setState(() => _showControls = false);
+    });
+  }
+
+  void _cancelHideTimer() {
+    _hideTimer?.cancel();
+  }
+
+  void _showControlsNow() {
+    if (!mounted) return;
+    if (!_showControls) {
+      setState(() => _showControls = true);
+    }
+    _startHideTimer();
+  }
+
+  void _toggleControls() {
+    if (!mounted) return;
+    setState(() => _showControls = !_showControls);
+    if (_showControls) {
+      _startHideTimer();
+    } else {
+      _cancelHideTimer();
+    }
+  }
+
+  // ---------- 抽屉 ----------
+
+  void _toggleDrawer() {
+    setState(() {
+      _drawerOpen = !_drawerOpen;
+      if (_drawerOpen) {
+        _showControls = true;
+      }
+    });
+    if (_drawerOpen) {
+      _cancelHideTimer();
+    } else {
+      _startHideTimer();
+    }
+  }
+
+  void _closeDrawer() {
+    if (!_drawerOpen) return;
+    setState(() => _drawerOpen = false);
+    _startHideTimer();
+  }
+
+  // ---------- 播放器事件 ----------
+
   void _handlePlayingChanged(bool playing) {
     if (!mounted) return;
-    unawaited(
-      _setKeepScreenAwake(
-        _appSettings.keepScreenAwakeDuringPlayback && playing,
-      ),
-    );
+    unawaited(_setKeepScreenAwake(
+      _appSettings.keepScreenAwakeDuringPlayback && playing,
+    ));
     if (!playing) {
       _hideTimer?.cancel();
       setState(() => _showControls = true);
       return;
     }
-    if (_showControls) {
-      _startHideTimer();
-    }
+    if (_showControls) _startHideTimer();
   }
 
   void _handlePositionChanged(Duration position) {
     final target = _pendingSeekTarget;
-    if (target == null || !_hasReachedSeekTarget(position, target)) {
-      return;
-    }
-
+    if (target == null || !_hasReachedSeekTarget(position, target)) return;
     _seekRecoveryTimer?.cancel();
     _pendingSeekTarget = null;
-    if (!mounted || !_isSeeking) {
-      return;
-    }
+    if (!mounted || !_isSeeking) return;
     setState(() => _isSeeking = false);
   }
 
@@ -243,74 +371,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     return delta.abs() <= _seekCompletionTolerance || position > target;
   }
 
-  void _startHideTimer() {
-    _hideTimer?.cancel();
-    if (!_player.state.playing) return;
-    _hideTimer = Timer(_controlsHideDelay, () {
-      if (!mounted) return;
-      setState(() {
-        _showControls = false;
-        _showFullscreenPanel = false;
-      });
-    });
-  }
-
-  void _cancelHideTimer() {
-    _hideTimer?.cancel();
-  }
-
-  void _setFullscreenPanelVisible(bool visible) {
-    if (!mounted || !_isFullscreen) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_isFullscreen) return;
-      final nextShowControls = visible ? true : _showControls;
-      if (_showFullscreenPanel == visible &&
-          _showControls == nextShowControls) {
-        return;
-      }
-      setState(() {
-        _showFullscreenPanel = visible;
-        if (visible) {
-          _showControls = true;
-        }
-      });
-      if (visible) {
-        _cancelHideTimer();
-      } else {
-        _startHideTimer();
-      }
-    });
-  }
-
-  void _openFullscreenPanel() {
-    _fullscreenPanelCloseTimer?.cancel();
-    _setFullscreenPanelVisible(true);
-  }
-
-  void _toggleFullscreenPanel() {
-    _fullscreenPanelCloseTimer?.cancel();
-    _setFullscreenPanelVisible(!_showFullscreenPanel);
-  }
-
-  void _scheduleCloseFullscreenPanel() {
-    _fullscreenPanelCloseTimer?.cancel();
-    _fullscreenPanelCloseTimer = Timer(
-      const Duration(milliseconds: 120),
-      () => _setFullscreenPanelVisible(false),
-    );
-  }
-
-  void _showControlsNow() {
-    if (!mounted) return;
-    if (!_showControls) {
-      setState(() => _showControls = true);
-    }
-    _startHideTimer();
-  }
-
-  void _handlePointerActivity() {
-    _showControlsNow();
-  }
+  // ---------- 加载 / 切集 / 进度 ----------
 
   Future<void> _loadEpisode({double startAtSeconds = 0}) async {
     _seekRecoveryTimer?.cancel();
@@ -372,12 +433,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _selectEpisode(int sourceIndex, int episodeIndex) async {
-    if (sourceIndex == _sourceIndex && episodeIndex == _episodeIndex) return;
+    if (sourceIndex == _sourceIndex && episodeIndex == _episodeIndex) {
+      _closeDrawer();
+      return;
+    }
     await _persistProgress();
     setState(() {
       _sourceIndex = sourceIndex;
       _episodeIndex = episodeIndex;
       _showControls = true;
+      _drawerOpen = false;
     });
     await _loadEpisode();
   }
@@ -395,10 +460,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final clamped = duration == Duration.zero
         ? position
         : Duration(
-            milliseconds: position.inMilliseconds.clamp(
-              0,
-              duration.inMilliseconds,
-            ),
+            milliseconds:
+                position.inMilliseconds.clamp(0, duration.inMilliseconds),
           );
     final wasPlaying = _player.state.playing;
     final seekGeneration = ++_seekGeneration;
@@ -441,7 +504,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _pendingSeekTarget == null) {
       return;
     }
-
     _isRecoveringFromSeek = true;
     try {
       await _loadEpisode(startAtSeconds: target.inMilliseconds / 1000);
@@ -459,11 +521,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final next = value.clamp(0, 100).toDouble();
     setState(() => _volume = next);
     await _player.setVolume(next);
-    _showControlsNow();
   }
 
   Future<void> _adjustVolume(double delta) async {
     await _setVolume(_volume + delta);
+    _showControlsNow();
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
@@ -486,84 +548,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _setKeepScreenAwake(bool enabled) async {
-    if (_wakelockEnabled == enabled) {
-      return;
-    }
-
+    if (_wakelockEnabled == enabled) return;
     await WakelockPlus.toggle(enable: enabled);
     _wakelockEnabled = enabled;
   }
 
-  Future<void> _exitFullscreenIfNeeded() async {
-    if (!_isFullscreen) {
+  Future<void> _handleBackPressed() async {
+    if (_drawerOpen) {
+      _closeDrawer();
       return;
     }
-
-    await setPlatformFullscreen(false);
-  }
-
-  Future<void> _setFullscreen(bool fullscreen) async {
-    if (_isFullscreenTransitioning) return;
-    _fullscreenPanelCloseTimer?.cancel();
-    try {
-      if (fullscreen) {
-        setState(() {
-          _isFullscreenTransitioning = true;
-          _showControls = true;
-        });
-        await setPlatformFullscreen(true);
-      } else {
-        setState(() {
-          _isFullscreenTransitioning = true;
-          _showFullscreenPanel = false;
-          _showControls = false;
-        });
-        await WidgetsBinding.instance.endOfFrame;
-        await Future<void>.delayed(const Duration(milliseconds: 34));
-        await setPlatformFullscreen(false);
-      }
-      if (isDesktopPlatform) {
-        await _syncFullscreenState();
-      } else if (mounted) {
-        setState(() {
-          _isFullscreen = fullscreen;
-          _isFullscreenTransitioning = false;
-          if (!fullscreen) {
-            _showFullscreenPanel = false;
-            _showControls = true;
-          }
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isFullscreen = fullscreen;
-        _isFullscreenTransitioning = false;
-        if (!fullscreen) {
-          _showFullscreenPanel = false;
-          _showControls = true;
-        }
-      });
-    }
-    if (fullscreen) {
-      _startHideTimer();
-    }
-  }
-
-  Future<void> _handleBackPressed() async {
-    if (_isFullscreen) {
+    if (!_isMobile && _isFullscreen) {
       await _setFullscreen(false);
       return;
     }
-
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     Navigator.of(context).pop();
-  }
-
-  Future<void> _toggleFullscreen() async {
-    await _setFullscreen(!_isFullscreen);
   }
 
   Future<void> _togglePlayPause() async {
@@ -575,13 +575,32 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _showControlsNow();
   }
 
+  /// 长按 2x 临时倍速
+  Future<void> _setTemporarySpeed(bool active) async {
+    if (active == _temporarySpeedActive) return;
+    if (active) {
+      _temporarySpeedSaved = _playbackSpeed;
+      _temporarySpeedActive = true;
+      await _player.setRate(2.0);
+    } else {
+      _temporarySpeedActive = false;
+      await _player.setRate(_temporarySpeedSaved);
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _handleKeyEvent(KeyEvent event) async {
     if (event is! KeyDownEvent) return;
-
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.escape && _isFullscreen) {
-      await _setFullscreen(false);
-      return;
+    if (key == LogicalKeyboardKey.escape) {
+      if (_drawerOpen) {
+        _closeDrawer();
+        return;
+      }
+      if (_isFullscreen && !_isMobile) {
+        await _setFullscreen(false);
+        return;
+      }
     }
     if (key == LogicalKeyboardKey.space) {
       await _togglePlayPause();
@@ -589,6 +608,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
     if (key == LogicalKeyboardKey.f11 || key == LogicalKeyboardKey.keyF) {
       await _toggleFullscreen();
+      return;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      _toggleDrawer();
       return;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {
@@ -616,345 +639,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
-  Widget _buildSplitLayout() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Row(
-      children: [
-        Expanded(child: _buildVideoStage(fullscreen: false)),
-        if (_panelCollapsed)
-          _CollapsedPanelRail(
-            onTap: () => setState(() => _panelCollapsed = false),
-          )
-        else
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            width: _panelWidth,
-            decoration: BoxDecoration(
-              color: colorScheme.surface.withValues(alpha: 0.96),
-              border: Border(
-                left: BorderSide(
-                  color: Colors.white.withValues(alpha: 0.08),
-                ),
-              ),
-            ),
-            child: Stack(
-              children: [
-                _buildEpisodePanel(),
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.resizeLeftRight,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onHorizontalDragUpdate: (details) {
-                        setState(() {
-                          _panelWidth = (_panelWidth - details.delta.dx)
-                              .clamp(
-                                _panelMinWidth,
-                                _panelMaxWidth,
-                              )
-                              .toDouble();
-                        });
-                      },
-                      child: const SizedBox(width: 8),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _PanelToggleButton(
-                      collapsed: false,
-                      onTap: () => setState(() => _panelCollapsed = true),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildMobileLayout() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 900) {
-          return _buildSplitLayout();
-        }
-
-        final stageHeight = (constraints.maxWidth * 9 / 16).clamp(
-          220.0,
-          constraints.maxHeight * 0.45,
-        );
-
-        return Column(
-          children: [
-            SizedBox(
-              height: stageHeight,
-              width: double.infinity,
-              child: _buildVideoStage(fullscreen: false),
-            ),
-            Expanded(
-              child: SafeArea(
-                top: false,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    border: Border(
-                      top: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.08),
-                      ),
-                    ),
-                  ),
-                  child: _buildEpisodePanel(),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildFullscreenLayout() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final panelActive = _showFullscreenPanel && !_isFullscreenTransitioning;
-    final useTouchPanel = !isDesktopPlatform;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _buildVideoStage(fullscreen: true),
-        if (!_isFullscreenTransitioning) ...[
-          if (useTouchPanel)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 20,
-              right: 16,
-              child: SafeArea(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: _showControls || panelActive ? 1 : 0.0001,
-                  child: IgnorePointer(
-                    ignoring: !_showControls && !panelActive,
-                    child: FilledButton.tonalIcon(
-                      onPressed: _toggleFullscreenPanel,
-                      icon: Icon(
-                        panelActive
-                            ? Icons.playlist_remove_rounded
-                            : Icons.playlist_play_rounded,
-                      ),
-                      label: Text(panelActive ? '收起选集' : '选集'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.black.withValues(alpha: 0.45),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            )
-          else
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              width: 28,
-              child: MouseRegion(
-                onEnter: (_) => _openFullscreenPanel(),
-                onHover: (_) => _openFullscreenPanel(),
-                onExit: (_) => _scheduleCloseFullscreenPanel(),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Container(
-                    width: 28,
-                    margin: const EdgeInsets.only(right: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.08),
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.chevron_left_rounded,
-                      color: Colors.white70,
-                      size: 18,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          Positioned(
-            right: 0,
-            top: 0,
-            bottom: 0,
-            width: _fullscreenPanelWidth,
-            child: IgnorePointer(
-              ignoring: !panelActive,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                offset: panelActive ? Offset.zero : const Offset(1.02, 0),
-                child: MouseRegion(
-                  onEnter: useTouchPanel ? null : (_) => _openFullscreenPanel(),
-                  onExit: useTouchPanel
-                      ? null
-                      : (_) => _scheduleCloseFullscreenPanel(),
-                  child: ClipRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface.withValues(alpha: 0.76),
-                          border: Border(
-                            left: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.14),
-                            ),
-                          ),
-                        ),
-                        child: Stack(
-                          children: [
-                            _buildEpisodePanel(glassMode: true),
-                            if (useTouchPanel)
-                              Positioned(
-                                top: MediaQuery.of(context).padding.top + 8,
-                                right: 8,
-                                child: SafeArea(
-                                  child: IconButton.filledTonal(
-                                    onPressed: _toggleFullscreenPanel,
-                                    icon: const Icon(Icons.close_rounded),
-                                    style: IconButton.styleFrom(
-                                      backgroundColor:
-                                          Colors.black.withValues(alpha: 0.3),
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildEpisodePanel({bool glassMode = false}) {
-    return PlayerEpisodePanel(
-      detail: widget.detail,
-      playResult: widget.playResult,
-      currentSourceIndex: _sourceIndex,
-      currentEpisodeIndex: _episodeIndex,
-      onEpisodeSelected: (episodeIndex) =>
-          _selectEpisode(_sourceIndex, episodeIndex),
-      onSourceSelected: _selectSource,
-      onPointerActivity: _handlePointerActivity,
-      glassMode: glassMode,
-    );
-  }
-
-  Widget _buildVideoStage({required bool fullscreen}) {
-    return MouseRegion(
-      onHover: (_) => _handlePointerActivity(),
-      onEnter: (_) => _handlePointerActivity(),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          setState(() => _showControls = !_showControls);
-          if (_showControls) {
-            _startHideTimer();
-          } else {
-            _cancelHideTimer();
-          }
-        },
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            PlayerVideoSurface(
-              controller: _videoController,
-              initialized: _initialized,
-              fit: _videoFit,
-              showLoadingIndicator: _loadError == null &&
-                  (!_initialized || _isSeeking || _isBuffering),
-              loadingLabel: _isSeeking
-                  ? '正在定位播放位置...'
-                  : _isBuffering
-                      ? '缓冲中...'
-                      : '加载中...',
-              errorText: _loadError,
-              onRetry: () => _loadEpisode(),
-            ),
-            AnimatedOpacity(
-              opacity: _showControls && !_isFullscreenTransitioning ? 1 : 0,
-              duration: const Duration(milliseconds: 180),
-              child: IgnorePointer(
-                ignoring: !_showControls || _isFullscreenTransitioning,
-                child: PlayerControlsOverlay(
-                  title: widget.detail.vodName,
-                  subtitle:
-                      '${_currentSource.name.isEmpty ? '线路 ${_sourceIndex + 1}' : _currentSource.name} · ${_currentEpisode.name}',
-                  player: _player,
-                  bufferPosition: _bufferPosition,
-                  fullscreen: fullscreen,
-                  canPlayPrevious: _canPlayPrevious,
-                  canPlayNext: _canPlayNext,
-                  volume: _volume,
-                  playbackSpeed: _playbackSpeed,
-                  fitMode: _fitMode,
-                  fitLabel: _fitLabel,
-                  speedOptions: _speedOptions,
-                  onBackPressed: () => unawaited(_handleBackPressed()),
-                  onDragWindow: fullscreen || !isDesktopPlatform
-                      ? null
-                      : () => Future<void>.microtask(startPlatformWindowDrag),
-                  onPointerActivity: _handlePointerActivity,
-                  onInteractionStart: _cancelHideTimer,
-                  onInteractionEnd: _startHideTimer,
-                  onPreviousEpisode: _canPlayPrevious
-                      ? () => _selectEpisode(_sourceIndex, _episodeIndex - 1)
-                      : null,
-                  onNextEpisode: _canPlayNext
-                      ? () => _selectEpisode(_sourceIndex, _episodeIndex + 1)
-                      : null,
-                  onPlayPause: _togglePlayPause,
-                  onSeek: _seekTo,
-                  onVolumeChanged: _setVolume,
-                  onSpeedSelected: _setPlaybackSpeed,
-                  onFitSelected: _setFitMode,
-                  onToggleFullscreen: _toggleFullscreen,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // ---------- 视图 ----------
 
   @override
   Widget build(BuildContext context) {
     return PopScope<void>(
-      canPop: !_isFullscreen,
+      canPop: !_drawerOpen && !(_isFullscreen && !_isMobile),
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _isFullscreen) {
-          unawaited(_setFullscreen(false));
-          return;
+        if (!didPop) {
+          if (_drawerOpen) {
+            _closeDrawer();
+            return;
+          }
+          if (_isFullscreen && !_isMobile) {
+            unawaited(_setFullscreen(false));
+            return;
+          }
         }
-        if (!didPop) return;
-        unawaited(_persistProgress());
+        if (didPop) {
+          unawaited(_persistProgress());
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -962,80 +666,186 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           focusNode: _keyboardFocusNode,
           autofocus: true,
           onKeyEvent: _handleKeyEvent,
-          child: _isFullscreen
-              ? _buildFullscreenLayout()
-              : isDesktopPlatform
-                  ? _buildSplitLayout()
-                  : _buildMobileLayout(),
+          child: Stack(
+            children: [
+              _buildVideoStage(),
+              // 抽屉遮罩 + 抽屉
+              _buildDrawerLayer(),
+            ],
+          ),
         ),
       ),
     );
   }
-}
 
-class _PanelToggleButton extends StatelessWidget {
-  const _PanelToggleButton({
-    required this.collapsed,
-    required this.onTap,
-  });
+  Widget _buildVideoStage() {
+    final showLoading = _loadError == null &&
+        (!_initialized || _isSeeking || _isBuffering);
+    final loadingLabel = _isSeeking
+        ? '正在定位...'
+        : _isBuffering
+            ? '缓冲中...'
+            : '加载中...';
 
-  final bool collapsed;
-  final VoidCallback onTap;
+    final compactControls = _isMobile
+        ? false // 移动端总是横屏，使用宽布局
+        : MediaQuery.of(context).size.width < 720;
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          width: 18,
-          height: 78,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.08),
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            PlayerVideoSurface(
+              controller: _videoController,
+              initialized: _initialized,
+              fit: _videoFit,
+              showLoadingIndicator: showLoading,
+              loadingLabel: loadingLabel,
+              errorText: _loadError,
+              onRetry: () => _loadEpisode(),
+            ),
+            // 中央暂停指示
+            _buildCenterPauseIndicator(),
+            // 手势层（位于控件之下，捕获舞台触摸/点击）
+            PlayerGestureLayer(
+              player: _player,
+              volume: _volume,
+              playbackSpeed: _playbackSpeed,
+              enableTouchGestures: _isMobile,
+              onTapStage: _toggleControls,
+              onSeek: _seekTo,
+              onTogglePlayPause: _togglePlayPause,
+              onVolumeChanged: (v) {
+                _showControlsNow();
+                unawaited(_setVolume(v));
+              },
+              onTemporarySpeed: (active) {
+                unawaited(_setTemporarySpeed(active));
+              },
+            ),
+            // 控件层
+            IgnorePointer(
+              ignoring: !_showControls,
+              child: AnimatedOpacity(
+                opacity: _showControls ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: PlayerControlsOverlay(
+                  title: widget.detail.vodName,
+                  subtitle:
+                      '${_currentSource.name.isEmpty ? '线路 ${_sourceIndex + 1}' : _currentSource.name} · ${_currentEpisode.name}',
+                  player: _player,
+                  bufferPosition: _bufferPosition,
+                  fullscreen: _isFullscreen,
+                  canPlayPrevious: _canPlayPrevious,
+                  canPlayNext: _canPlayNext,
+                  volume: _volume,
+                  playbackSpeed: _playbackSpeed,
+                  fitMode: _fitMode,
+                  fitLabel: _fitLabel,
+                  speedOptions: _speedOptions,
+                  episodesActive: _drawerOpen,
+                  compact: compactControls,
+                  onBackPressed: () => unawaited(_handleBackPressed()),
+                  onDragWindow: _isFullscreen || !isDesktopPlatform
+                      ? null
+                      : () => Future<void>.microtask(startPlatformWindowDrag),
+                  onPlayPause: _togglePlayPause,
+                  onSeek: _seekTo,
+                  onSpeedSelected: _setPlaybackSpeed,
+                  onFitSelected: _setFitMode,
+                  onVolumeChanged: _setVolume,
+                  onToggleFullscreen: _toggleFullscreen,
+                  onToggleEpisodes: _toggleDrawer,
+                  onPreviousEpisode: _canPlayPrevious
+                      ? () => _selectEpisode(_sourceIndex, _episodeIndex - 1)
+                      : null,
+                  onNextEpisode: _canPlayNext
+                      ? () => _selectEpisode(_sourceIndex, _episodeIndex + 1)
+                      : null,
+                  onInteractionStart: _cancelHideTimer,
+                  onInteractionEnd: _startHideTimer,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterPauseIndicator() {
+    return StreamBuilder<bool>(
+      stream: _player.stream.playing,
+      initialData: _player.state.playing,
+      builder: (context, snapshot) {
+        final playing = snapshot.data ?? false;
+        if (playing) return const SizedBox.shrink();
+        if (!_initialized || _loadError != null) return const SizedBox.shrink();
+        return IgnorePointer(
+          child: Center(
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.45),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                size: 44,
+                color: Colors.white,
+              ),
             ),
           ),
-          alignment: Alignment.center,
-          child: Icon(
-            collapsed
-                ? Icons.chevron_left_rounded
-                : Icons.chevron_right_rounded,
-            size: 16,
-            color: Colors.white70,
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
-}
 
-class _CollapsedPanelRail extends StatelessWidget {
-  const _CollapsedPanelRail({required this.onTap});
+  Widget _buildDrawerLayer() {
+    final mediaWidth = MediaQuery.of(context).size.width;
+    final width = _drawerWidth.clamp(280.0, mediaWidth * 0.85);
 
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.3),
-        border: Border(
-          left: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: _PanelToggleButton(
-            collapsed: true,
-            onTap: onTap,
+    return Stack(
+      children: [
+        // 遮罩
+        IgnorePointer(
+          ignoring: !_drawerOpen,
+          child: GestureDetector(
+            onTap: _closeDrawer,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              color: Colors.black.withValues(alpha: _drawerOpen ? 0.4 : 0),
+            ),
           ),
         ),
-      ),
+        // 抽屉本体
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          right: _drawerOpen ? 0 : -width - 16,
+          top: 0,
+          bottom: 0,
+          width: width,
+          child: Material(
+            elevation: 12,
+            color: Colors.transparent,
+            child: PlayerEpisodePanel(
+              detail: widget.detail,
+              playResult: widget.playResult,
+              currentSourceIndex: _sourceIndex,
+              currentEpisodeIndex: _episodeIndex,
+              onSourceSelected: _selectSource,
+              onEpisodeSelected: (index) =>
+                  _selectEpisode(_sourceIndex, index),
+              onClose: _closeDrawer,
+              glassMode: true,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
