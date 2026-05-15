@@ -5,132 +5,102 @@
 <h1 align="center">TTTTV</h1>
 
 <p align="center">
-  一款面向中文用户的影视与直播聚合播放器，兼顾桌面端沉浸体验与移动端观影效率。
+  一款面向中文用户的影视聚合播放器，兼顾桌面端沉浸体验与移动端观影效率。
 </p>
 
 <p align="center">
-  影视搜索、在线播放、直播聚合、片源管理、历史记录、收藏体系、主题切换，集中在一个轻量、直接的 Flutter 客户端里。
+  影视搜索、在线播放、片源管理、历史记录、收藏体系、主题切换，集中在一个轻量、直接的 Flutter 客户端里。
 </p>
 
 ---
 
 ## 告示
-1.由于维护难度较高，0.5.14及其之后的版本，将不再提供直播功能。如果仍需使用、维护，请自行下载旧版本release或fork到旧版本分支。感谢理解！
-2.视频源插件完全支持lunatv格式。
+
+- 自 0.5.14 起，直播相关功能已不再维护。如仍需使用直播，请下载旧版本 release 或自行从旧版分支构建。
+- 视频源插件完全兼容 LunaTV 格式。
 
 ## 项目简介
 
-TTTTV 是一个以 Flutter 构建的多端客户端，目标是把常用的影视点播与直播观看能力整合到一个统一、清晰、易上手的界面中。
+TTTTV 是一个用 Flutter 构建的多端客户端，把常用的影视点播能力整合到一个统一、清晰、易上手的界面中。
 
-相比“功能很多但入口分散”的传统聚合工具，TTTTV 更强调：
+相比"功能很多但入口分散"的传统聚合工具，TTTTV 更强调：
 
-- 更直接的搜索与观看路径
-- 更干净的播放页和直播页体验
+- 更直接的搜索与观看路径：秒搜、秒播
+- 更干净的播放页体验
 - 更适合长期使用的片源与缓存管理
-- 更适合桌面端与 Android 端并行推进的统一代码架构
+- 桌面端与 Android 端共用一套代码架构
 
-当前版本已经具备 Windows 与 Android 发布能力，并持续完善播放器体验、直播能力、设置系统与macos端、iPhone端、鸿蒙端的兼容。
+当前版本已经具备 Windows 与 Android 发布能力，并持续完善播放器体验、设置系统以及对 macOS / iOS / 鸿蒙端的兼容。
 
 ## 核心亮点
 
-- 影视点播
-  - 支持片源搜索、详情解析、剧集切换、播放进度记录
-- 直播聚合
-  - 支持多平台直播浏览、直播间播放、弹幕能力与基础登录 Cookie 管理
-- 播放器体验
-  - 支持全屏切换、画面比例控制、播放记录、移动端横竖屏联动
-- 片源管理
-  - 支持启用、停用、健康检查、远程导入与本地维护
-- 个性化设置
-  - 支持主题模式、主题色、播放偏好、直播偏好、缓存策略
-- 多端基础
-  - Windows 桌面端与 Android 端均可构建发布
+- 影视点播：片源搜索、详情解析、剧集切换、播放进度记录
+- 现代化播放器：参考主流视频播放器（Kazumi / Bilibili 等）实现的统一控件层
+  - 桌面端键盘快捷键、移动端触摸手势（双击 ±10s、长按 2× 倍速、垂直滑动调节音量、横向拖动 seek 预览）
+  - 选集 / 线路抽屉，自动滚动到当前集
+  - HLS 本地代理：共享 HttpClient、ENDLIST 感知缓存、客户端断开主动取消上游
+- 高速搜索：尊重服务端 `pagecount`，按需分页 + 短 TTL 负缓存 + CancelToken 真实取消
+- 片源管理：启用 / 停用、健康检查、远程导入、本地维护
+- 个性化设置：主题模式 / 主题色、播放偏好、缓存策略
+- 多端支持：Windows 桌面端与 Android 端均可一键发布
 
 ## 界面预览
 
 ### 首页
 
-![首页](/assest/首页.png)
+![首页](assest/首页.png)
 
 ### 影视播放页
 
-![影视播放页](/assest/影视播放页.png)
-
-### 直播首页
-
-![直播首页](/assest/直播首页.png)
-
-### 直播播放页
-
-![直播播放页](/assest/直播播放页.png)
+![影视播放页](assest/影视播放页.png)
 
 ### 我的页面
 
-![我的页面](/assest/我的页面.png)
+![我的页面](assest/我的页面.png)
 
 ### 设置页
 
-![设置页](/assest/设置页.png)
+![设置页](assest/设置页.png)
 
 ## 当前已实现能力
 
-### 点播侧
+### 点播
 
 - 搜索影视资源
 - 查看详情与剧集列表
-- 调用播放器播放
-- 保存历史记录
+- 现代化播放器与选集抽屉
+- 历史记录与"继续观看"
 - 收藏管理
 
-### 直播侧
+### 设置
 
-- 平台切换
-- 推荐流与搜索
-- 直播间播放
-- 清晰度切换
-- 弹幕显示与弹幕设置
-- 基础 Cookie 管理与检查
-
-### 设置侧
-
-- 外观设置
-- 播放设置
-- 直播设置
-- 片源策略
-- 缓存策略
-- 片源管理
+- 外观（主题模式 / 主题色）
+- 播放偏好（默认画面比例、保持屏幕常亮、是否记录进度）
+- 片源管理（启用、停用、健康检查、远程导入）
+- 缓存策略（自动清理阈值、退出时清理）
 
 ## 技术栈
 
-- Flutter
-- Riverpod
-- Dio
-- media_kit
-- shared_preferences
-- window_manager
+- Flutter (`>=3.5.0 <4.0.0`)
+- Riverpod —— 状态与依赖注入
+- Dio —— HTTP 客户端
+- media_kit + media_kit_video —— 视频播放
+- shared_preferences —— 持久化设置
+- window_manager —— 桌面窗口控制
+- wakelock_plus —— 播放期间保持屏幕常亮
 
-## 目录说明
+## 仓库结构
 
 ```text
-ttttv_flutter/
-├─ lib/
-│  ├─ app/                     应用壳与导航
-│  ├─ core/                    通用模型、provider、平台适配、主题
-│  ├─ features/
-│  │  ├─ home/                 首页
-│  │  ├─ search/               搜索
-│  │  ├─ detail/               详情页
-│  │  ├─ player/               点播播放器
-│  │  ├─ live/                 直播能力
-│  │  ├─ settings/             设置与片源管理
-│  │  ├─ history/              历史记录
-│  │  ├─ favorites/            收藏
-│  │  └─ my/                   我的页面
-│  └─ bootstrap/               桌面端 / 移动端启动入口
-├─ android/                    Android 工程
-├─ windows/                    Windows Runner
-└─ README.md
+TTTTV-Flutter/
+├─ ttttv_flutter/              Flutter 工程（主代码）
+├─ assest/                     展示资源（截图 / logo）
+├─ build_android_apk.ps1       Android Release APK 打包脚本
+├─ build_windows_installer.ps1 Windows Inno Setup 安装包打包脚本
+└─ README.md                   你正在看的文件
 ```
+
+`ttttv_flutter/` 内部架构和开发约定请看 [`ttttv_flutter/README.md`](ttttv_flutter/README.md)。
 
 ## 快速开始
 
@@ -139,7 +109,7 @@ ttttv_flutter/
 ```powershell
 cd ttttv_flutter
 flutter pub get
-flutter run -d windows
+flutter run -d windows   # 或 -d android, -d <emulator-id>
 ```
 
 ### Android 调试构建
@@ -151,7 +121,7 @@ flutter build apk --debug
 
 ## 发布构建
 
-项目根目录已经提供发布脚本。
+仓库根目录已经提供两个一键脚本，输出统一落到 `build/installers/`。
 
 ### Windows 安装包
 
@@ -159,7 +129,9 @@ flutter build apk --debug
 powershell -ExecutionPolicy Bypass -File .\build_windows_installer.ps1
 ```
 
-输出目录：
+依赖 [Inno Setup 6](https://jrsoftware.org/isinfo.php)，脚本会自动从 PATH 或常见路径查找 `ISCC.exe`。
+
+输出：
 
 - `build/installers/TTTTV-Windows-<version>-Setup.exe`
 
@@ -169,30 +141,31 @@ powershell -ExecutionPolicy Bypass -File .\build_windows_installer.ps1
 powershell -ExecutionPolicy Bypass -File .\build_android_apk.ps1
 ```
 
-输出目录：
+需要 `ttttv_flutter/android/app/ttttv.jks` 签名密钥，密码 / alias 在 `android/app/build.gradle.kts` 的 `signingConfigs.release` 中配置。本仓库的`.jks` 已被 `.gitignore` 排除，二次开发请制作自己的副本，请妥善保管自己的副本。
+
+输出：
 
 - `build/installers/TTTTV-Android-<version>.apk`
 
 ## 适用场景
 
 - 想在桌面端快速搜索并观看影视资源
-- 想在一个统一界面里切换多个直播平台
-- 想自己管理片源、缓存和播放偏好
+- 想自己管理片源、缓存与播放偏好
 - 想在 Windows 与 Android 上保持接近一致的使用体验
 
 ## 后续方向
 
-- 继续优化移动端播放器布局与交互
-- 补齐直播的扫码、账密登录与账号相关能力（当前支持cookies登陆）
+- 持续打磨移动端播放器交互细节
 - 完善片源健康策略与自动化维护
 - 提升发布流程与安装体验
+- 适配 macOS / iOS / 鸿蒙
 
 ## 资源仓库
 
-[TTTTV-config](https://github.com/WEP-56/TTTTV-config)
+[TTTTV-config](https://github.com/WEP-56/TTTTV-config) —— 远程片源索引与默认配置，内容来自网络。
 
 ## 免责声明
 
-本项目仅提供公开可访问信息的聚合与播放能力，不内置影视内容，也不声明对第三方片源、直播平台或内容拥有任何权利。
+本项目仅提供公开可访问信息的聚合与播放能力，不内置影视内容，也不声明对第三方片源或内容拥有任何权利。
 
 请在遵守当地法律法规与相关平台服务条款的前提下使用本项目。用户应自行判断第三方内容的合法性、安全性与可用性，并自行承担使用风险。
