@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
-import '../../detail/presentation/detail_page.dart';
+import '../../player/application/resume_play_launcher.dart';
 
 class FavoritesPage extends ConsumerWidget {
   const FavoritesPage({super.key});
@@ -37,15 +38,8 @@ class FavoritesPage extends ConsumerWidget {
                         if (item.vodRemarks != null) item.vodRemarks!,
                       ].join(' / '),
                     ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => DetailPage(
-                            initialItem: VodItem.fromFavorite(item),
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: () =>
+                        unawaited(openPlayerFromFavorite(context, ref, item)),
                   ),
                 );
               },

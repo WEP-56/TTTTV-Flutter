@@ -74,59 +74,66 @@ class PlayerControlsOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.55),
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.65),
-          ],
-          stops: const [0, 0.18, 0.6, 1],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.55),
+                  Colors.black.withValues(alpha: 0.0),
+                  Colors.black.withValues(alpha: 0.0),
+                  Colors.black.withValues(alpha: 0.65),
+                ],
+                stops: const [0, 0.18, 0.6, 1],
+              ),
+            ),
+          ),
         ),
-      ),
-      child: Column(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: _TopBar(
-              title: title,
-              subtitle: subtitle,
-              compact: compact,
-              onBackPressed: onBackPressed,
-              onDragWindow: onDragWindow,
-              onMore: () => _openMoreSheet(context),
+        Column(
+          children: [
+            SafeArea(
+              bottom: false,
+              child: _TopBar(
+                title: title,
+                subtitle: subtitle,
+                compact: compact,
+                onBackPressed: onBackPressed,
+                onDragWindow: onDragWindow,
+                onMore: () => _openMoreSheet(context),
+              ),
             ),
-          ),
-          const Spacer(),
-          SafeArea(
-            top: false,
-            child: _BottomDock(
-              player: player,
-              bufferPosition: bufferPosition,
-              compact: compact,
-              fullscreen: fullscreen,
-              episodesActive: episodesActive,
-              canPlayPrevious: canPlayPrevious,
-              canPlayNext: canPlayNext,
-              playbackSpeed: playbackSpeed,
-              speedOptions: speedOptions,
-              onPlayPause: onPlayPause,
-              onSeek: onSeek,
-              onPreviousEpisode: onPreviousEpisode,
-              onNextEpisode: onNextEpisode,
-              onSpeedSelected: onSpeedSelected,
-              onToggleEpisodes: onToggleEpisodes,
-              onToggleFullscreen: onToggleFullscreen,
-              onInteractionStart: onInteractionStart,
-              onInteractionEnd: onInteractionEnd,
+            const Spacer(),
+            SafeArea(
+              top: false,
+              child: _BottomDock(
+                player: player,
+                bufferPosition: bufferPosition,
+                compact: compact,
+                fullscreen: fullscreen,
+                episodesActive: episodesActive,
+                canPlayPrevious: canPlayPrevious,
+                canPlayNext: canPlayNext,
+                playbackSpeed: playbackSpeed,
+                speedOptions: speedOptions,
+                onPlayPause: onPlayPause,
+                onSeek: onSeek,
+                onPreviousEpisode: onPreviousEpisode,
+                onNextEpisode: onNextEpisode,
+                onSpeedSelected: onSpeedSelected,
+                onToggleEpisodes: onToggleEpisodes,
+                onToggleFullscreen: onToggleFullscreen,
+                onInteractionStart: onInteractionStart,
+                onInteractionEnd: onInteractionEnd,
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
+      ],
     );
   }
 

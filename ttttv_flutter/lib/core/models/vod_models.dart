@@ -200,6 +200,8 @@ class WatchHistoryItem {
     required this.progress,
     this.vodPic,
     this.episode,
+    this.sourceIndex,
+    this.episodeIndex,
   });
 
   final String vodId;
@@ -209,6 +211,8 @@ class WatchHistoryItem {
   final int lastPlayTime;
   final double progress;
   final String? episode;
+  final int? sourceIndex;
+  final int? episodeIndex;
 
   factory WatchHistoryItem.fromJson(Object? json) {
     final map = json as Map<String, dynamic>;
@@ -220,6 +224,8 @@ class WatchHistoryItem {
       lastPlayTime: _readInt(map['last_play_time']) ?? 0,
       progress: _readDouble(map['progress']) ?? 0,
       episode: _readString(map['episode']),
+      sourceIndex: _readInt(map['source_index']),
+      episodeIndex: _readInt(map['episode_index']),
     );
   }
 }
@@ -232,6 +238,8 @@ class WatchHistoryUpsert {
     required this.progress,
     this.vodPic,
     this.episode,
+    this.sourceIndex,
+    this.episodeIndex,
   });
 
   final String vodId;
@@ -240,6 +248,8 @@ class WatchHistoryUpsert {
   final double progress;
   final String? vodPic;
   final String? episode;
+  final int? sourceIndex;
+  final int? episodeIndex;
 
   Map<String, dynamic> toJson() {
     return {
@@ -249,6 +259,8 @@ class WatchHistoryUpsert {
       'vod_pic': vodPic,
       'progress': progress,
       'episode': episode,
+      'source_index': sourceIndex,
+      'episode_index': episodeIndex,
     };
   }
 }

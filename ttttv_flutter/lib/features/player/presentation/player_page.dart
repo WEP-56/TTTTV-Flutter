@@ -9,6 +9,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
+import '../../../core/platform/screen_brightness.dart';
 import '../../../core/providers.dart';
 import '../../history/domain/history_repository.dart';
 import 'widgets/player_controls_overlay.dart';
@@ -49,7 +50,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   static const Duration _seekStep = Duration(seconds: 10);
   static const Duration _seekRecoveryDelay = Duration(seconds: 8);
   static const Duration _seekCompletionTolerance = Duration(seconds: 2);
+  static const Duration _progressSaveInterval = Duration(seconds: 15);
   static const Duration _minProgressPersistence = Duration(seconds: 30);
+  static const Duration _initialSeekTimeout = Duration(seconds: 4);
   static const double _drawerWidth = 340;
   static const double _volumeStep = 5;
   static const List<double> _speedOptions = <double>[
@@ -89,6 +92,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   String? _loadError;
   Timer? _hideTimer;
   Timer? _seekRecoveryTimer;
+  Timer? _progressSaveTimer;
   String? _lastPersistSignature;
   bool _isBuffering = false;
   bool _isSeeking = false;
@@ -154,7 +158,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
 
     unawaited(_player.setVolume(_volume));
+    unawaited(_loadScreenBrightness());
     unawaited(_loadEpisode(startAtSeconds: widget.initialProgress));
+    _progressSaveTimer = Timer.periodic(
+      _progressSaveInterval,
+      (_) => unawaited(_persistProgress()),
+    );
     _startHideTimer();
   }
 
@@ -163,6 +172,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _fullscreenBinding.detach();
     _hideTimer?.cancel();
     _seekRecoveryTimer?.cancel();
+    _progressSaveTimer?.cancel();
     _keyboardFocusNode.dispose();
     _playingSubscription.cancel();
     _positionSubscription.cancel();
@@ -170,6 +180,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _bufferSubscription.cancel();
     unawaited(_persistProgress());
     unawaited(_setKeepScreenAwake(false));
+    unawaited(resetScreenBrightness());
     if (_isMobile && _mobileOrientationApplied) {
       unawaited(_restoreMobileOrientation());
     } else {
@@ -364,6 +375,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     ));
     if (!playing) {
       _hideTimer?.cancel();
+      unawaited(_persistProgress());
       setState(() => _showControls = true);
       return;
     }
@@ -419,7 +431,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       await _player.setRate(_playbackSpeed);
       await _player.setVolume(_volume);
       if (startAtSeconds > 0) {
-        await _player.seek(Duration(seconds: startAtSeconds.round()));
+        final target = Duration(seconds: startAtSeconds.round());
+        final duration = await _waitForPlaybackDuration();
+        if (!mounted) return;
+        final seekTarget =
+            duration == null ? target : _clampPosition(target, duration);
+        await _seekTo(seekTarget);
+        unawaited(_verifyInitialSeek(seekTarget));
       }
       await _player.play();
       if (!mounted) return;
@@ -450,8 +468,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         vodPic: widget.detail.vodPic,
         progress: positionSeconds,
         episode: _currentEpisode.name,
+        sourceIndex: _sourceIndex,
+        episodeIndex: _episodeIndex,
       ),
     );
+    if (mounted) {
+      ref.invalidate(historyItemsProvider);
+    }
     _lastPersistSignature = signature;
   }
 
@@ -535,6 +558,34 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  Future<Duration?> _waitForPlaybackDuration() async {
+    final current = _player.state.duration;
+    if (current > Duration.zero) return current;
+    try {
+      return await _player.stream.duration
+          .firstWhere((duration) => duration > Duration.zero)
+          .timeout(_initialSeekTimeout);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Duration _clampPosition(Duration position, Duration duration) {
+    if (duration == Duration.zero) return position;
+    return Duration(
+      milliseconds:
+          position.inMilliseconds.clamp(0, duration.inMilliseconds),
+    );
+  }
+
+  Future<void> _verifyInitialSeek(Duration target) async {
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (!mounted || _pendingSeekTarget == null) return;
+    final position = _player.state.position;
+    if (_hasReachedSeekTarget(position, target)) return;
+    await _seekTo(target);
+  }
+
   Future<void> _seekRelative(Duration delta) async {
     final current = _player.state.position;
     await _seekTo(current + delta);
@@ -544,6 +595,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final next = value.clamp(0, 100).toDouble();
     setState(() => _volume = next);
     await _player.setVolume(next);
+  }
+
+  Future<void> _loadScreenBrightness() async {
+    final brightness = await readScreenBrightness();
+    if (!mounted) return;
+    setState(() => _brightness = brightness);
+  }
+
+  Future<void> _setBrightness(double value) async {
+    final next = value.clamp(0.0, 1.0).toDouble();
+    setState(() => _brightness = next);
+    await setScreenBrightness(next);
   }
 
   Future<void> _adjustVolume(double delta) async {
@@ -720,8 +783,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Widget _buildVideoStage() {
-    final showLoading = _loadError == null &&
-        (!_initialized || _isSeeking || _isBuffering);
+    final showLoading =
+        _loadError == null && (!_initialized || _isSeeking || _isBuffering);
     final loadingLabel = _isSeeking
         ? '正在定位...'
         : _isBuffering
@@ -750,14 +813,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             ),
             // 2. 中央暂停指示
             _buildCenterPauseIndicator(),
+            if (_isMobile)
+              MobileGestureLayer(
+                player: _player,
+                volume: _volume,
+                brightness: _brightness,
+                onTapToggleControls: _toggleControls,
+                onSeek: _seekTo,
+                onTogglePlayPause: _togglePlayPause,
+                onVolumeChanged: (v) => unawaited(_setVolume(v)),
+                onBrightnessChanged: (v) => unawaited(_setBrightness(v)),
+                onTemporarySpeed: (active) =>
+                    unawaited(_setTemporarySpeed(active)),
+                onHideControls: _forceHideControls,
+              ),
             // 3. 控件层 + 桌面端点击检测（控件作为 GestureDetector 的子节点，
             //    按钮天然在 gesture arena 里优先胜出，不会冲突）
             if (_isMobile)
-              AnimatedOpacity(
-                opacity: _showControls ? 1 : 0,
-                duration: const Duration(milliseconds: 180),
-                child: AbsorbPointer(
-                  absorbing: !_showControls,
+              IgnorePointer(
+                ignoring: !_showControls,
+                child: AnimatedOpacity(
+                  opacity: _showControls ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
                   child: _buildControlsOverlay(compactControls),
                 ),
               )
@@ -776,21 +853,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 ),
               ),
             // 4. 最顶层：移动端手势 / 桌面端悬停检测（不拦截点击）
-            if (_isMobile)
-              MobileGestureLayer(
-                player: _player,
-                volume: _volume,
-                brightness: _brightness,
-                onTapToggleControls: _toggleControls,
-                onSeek: _seekTo,
-                onTogglePlayPause: _togglePlayPause,
-                onVolumeChanged: (v) => unawaited(_setVolume(v)),
-                onBrightnessChanged: (v) => setState(() => _brightness = v),
-                onTemporarySpeed: (active) =>
-                    unawaited(_setTemporarySpeed(active)),
-                onHideControls: _forceHideControls,
-              )
-            else
+            if (!_isMobile)
               DesktopHoverDetector(
                 onShowControls: _desktopShowControls,
                 onHideControls: _desktopHideControls,
@@ -912,8 +975,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               currentSourceIndex: _sourceIndex,
               currentEpisodeIndex: _episodeIndex,
               onSourceSelected: _selectSource,
-              onEpisodeSelected: (index) =>
-                  _selectEpisode(_sourceIndex, index),
+              onEpisodeSelected: (index) => _selectEpisode(_sourceIndex, index),
               onClose: _closeDrawer,
               glassMode: true,
             ),

@@ -73,7 +73,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       var prog = 0.0;
       if (resumeItem != null && playResult != null) {
         prog = resumeItem.progress;
-        (si, ei) = _locateEpisode(playResult, resumeItem.episode);
+        (si, ei) = _locateEpisode(
+          playResult,
+          resumeItem.episode,
+          sourceIndex: resumeItem.sourceIndex,
+          episodeIndex: resumeItem.episodeIndex,
+        );
       }
       setState(() {
         _detail = detail;
@@ -181,7 +186,20 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     ));
   }
 
-  (int, int) _locateEpisode(PlayResult result, String? name) {
+  (int, int) _locateEpisode(
+    PlayResult result,
+    String? name, {
+    int? sourceIndex,
+    int? episodeIndex,
+  }) {
+    if (sourceIndex != null &&
+        episodeIndex != null &&
+        sourceIndex >= 0 &&
+        sourceIndex < result.sources.length &&
+        episodeIndex >= 0 &&
+        episodeIndex < result.sources[sourceIndex].episodes.length) {
+      return (sourceIndex, episodeIndex);
+    }
     if (name == null || name.isEmpty) return (0, 0);
     for (var si = 0; si < result.sources.length; si++) {
       final eps = result.sources[si].episodes;

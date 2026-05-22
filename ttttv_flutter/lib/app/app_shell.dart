@@ -57,7 +57,6 @@ class _AppShellState extends ConsumerState<AppShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(_runExitMaintenance());
     super.dispose();
   }
 

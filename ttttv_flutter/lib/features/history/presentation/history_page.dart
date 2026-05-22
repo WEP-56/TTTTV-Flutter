@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
-import '../../detail/presentation/detail_page.dart';
+import '../../player/application/resume_play_launcher.dart';
 
 class HistoryPage extends ConsumerWidget {
   const HistoryPage({super.key});
@@ -34,19 +36,12 @@ class HistoryPage extends ConsumerWidget {
                     subtitle: Text(
                       [
                         item.sourceKey,
-                        if (item.episode != null) item.episode!,
+                        _episodeLabel(item),
                       ].join(' / '),
                     ),
                     trailing: Text('${item.progress.round()}s'),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => DetailPage(
-                            initialItem: VodItem.fromHistory(item),
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: () =>
+                        unawaited(openPlayerFromHistory(context, ref, item)),
                   ),
                 );
               },
@@ -57,5 +52,15 @@ class HistoryPage extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
       ),
     );
+  }
+
+  String _episodeLabel(WatchHistoryItem item) {
+    if (item.episodeIndex != null) {
+      return '第${item.episodeIndex! + 1}集';
+    }
+    if (item.episode != null && item.episode!.isNotEmpty) {
+      return item.episode!;
+    }
+    return '单集';
   }
 }

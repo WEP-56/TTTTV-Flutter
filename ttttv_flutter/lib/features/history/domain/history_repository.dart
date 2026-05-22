@@ -8,6 +8,9 @@ abstract class HistoryRepository {
   Future<void> deleteHistory({
     required String vodId,
     required String sourceKey,
+    int? sourceIndex,
+    int? episodeIndex,
+    String? episode,
   });
 
   Future<void> clearHistory();

@@ -35,12 +35,7 @@ class LocalHistoryRepository implements HistoryRepository {
   Future<void> addHistory(WatchHistoryUpsert request) async {
     final prefs = await SharedPreferences.getInstance();
     final history = await fetchHistory();
-    final next = history
-        .where(
-          (item) => !(item.vodId == request.vodId &&
-              item.sourceKey == request.sourceKey),
-        )
-        .toList();
+    final next = history.where((item) => !_isSameEntry(item, request)).toList();
 
     next.insert(
       0,
@@ -52,6 +47,8 @@ class LocalHistoryRepository implements HistoryRepository {
         lastPlayTime: DateTime.now().millisecondsSinceEpoch,
         progress: request.progress,
         episode: request.episode,
+        sourceIndex: request.sourceIndex,
+        episodeIndex: request.episodeIndex,
       ),
     );
 
@@ -65,12 +62,22 @@ class LocalHistoryRepository implements HistoryRepository {
   Future<void> deleteHistory({
     required String vodId,
     required String sourceKey,
+    int? sourceIndex,
+    int? episodeIndex,
+    String? episode,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final history = await fetchHistory();
     final next = history
         .where(
-          (item) => !(item.vodId == vodId && item.sourceKey == sourceKey),
+          (item) => !(item.vodId == vodId &&
+              item.sourceKey == sourceKey &&
+              _matchesEpisode(
+                item,
+                sourceIndex: sourceIndex,
+                episodeIndex: episodeIndex,
+                episode: episode,
+              )),
         )
         .toList();
     await prefs.setString(
@@ -94,6 +101,50 @@ class LocalHistoryRepository implements HistoryRepository {
       'last_play_time': item.lastPlayTime,
       'progress': item.progress,
       'episode': item.episode,
+      'source_index': item.sourceIndex,
+      'episode_index': item.episodeIndex,
     };
+  }
+
+  bool _isSameEntry(WatchHistoryItem item, WatchHistoryUpsert request) {
+    if (item.vodId != request.vodId || item.sourceKey != request.sourceKey) {
+      return false;
+    }
+
+    if (request.sourceIndex != null && request.episodeIndex != null) {
+      if (item.sourceIndex == request.sourceIndex &&
+          item.episodeIndex == request.episodeIndex) {
+        return true;
+      }
+      if (item.episode != null &&
+          request.episode != null &&
+          item.episode == request.episode) {
+        return true;
+      }
+      return false;
+    }
+
+    if (request.episode != null && request.episode!.isNotEmpty) {
+      return item.episode == request.episode;
+    }
+
+    return item.sourceIndex == request.sourceIndex &&
+        item.episodeIndex == request.episodeIndex;
+  }
+
+  bool _matchesEpisode(
+    WatchHistoryItem item, {
+    int? sourceIndex,
+    int? episodeIndex,
+    String? episode,
+  }) {
+    if (sourceIndex != null && episodeIndex != null) {
+      return item.sourceIndex == sourceIndex &&
+          item.episodeIndex == episodeIndex;
+    }
+    if (episode != null && episode.isNotEmpty) {
+      return item.episode == episode;
+    }
+    return item.sourceIndex == sourceIndex && item.episodeIndex == episodeIndex;
   }
 }

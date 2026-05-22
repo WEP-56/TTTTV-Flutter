@@ -4,17 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 
-/// 移动端触摸手势层（参考 Bilibili / YouTube 逻辑）。
+/// 绉诲姩绔Е鎽告墜鍔垮眰锛堝弬鑰?Bilibili / YouTube 閫昏緫锛夈€?
 ///
-/// 这个层放在控件层**之上**，拦截全局手势：
-/// - 单击：切换控件显隐
-/// - 双击：左 -10s / 中暂停 / 右 +10s
-/// - 长按：隐藏控件 + 临时 2× 倍速（松开恢复）
-/// - 水平拖动：全局 seek 预览（不受控件显隐影响）
-/// - 垂直拖动右半屏：音量
-/// - 垂直拖动左半屏：亮度
+/// 杩欎釜灞傛斁鍦ㄦ帶浠跺眰**涔嬩笂**锛屾嫤鎴叏灞€鎵嬪娍锛?
+/// - 鍗曞嚮锛氬垏鎹㈡帶浠舵樉闅?
+/// - 鍙屽嚮锛氬乏 -10s / 涓殏鍋?/ 鍙?+10s
+/// - 闀挎寜锛氶殣钘忔帶浠?+ 涓存椂 2脳 鍊嶉€燂紙鏉惧紑鎭㈠锛?
+/// - 姘村钩鎷栧姩锛氬叏灞€ seek 棰勮锛堜笉鍙楁帶浠舵樉闅愬奖鍝嶏級
+/// - 鍨傜洿鎷栧姩鍙冲崐灞忥細闊抽噺
+/// - 鍨傜洿鎷栧姩宸﹀崐灞忥細浜害
 ///
-/// 桌面端不使用此层，改用 [DesktopHoverDetector]。
+/// 妗岄潰绔笉浣跨敤姝ゅ眰锛屾敼鐢?[DesktopHoverDetector]銆?
 class MobileGestureLayer extends StatefulWidget {
   const MobileGestureLayer({
     required this.player,
@@ -39,10 +39,10 @@ class MobileGestureLayer extends StatefulWidget {
   final ValueChanged<double> onVolumeChanged;
   final ValueChanged<double> onBrightnessChanged;
 
-  /// 回调：true 进入临时倍速，false 恢复
+  /// 鍥炶皟锛歵rue 杩涘叆涓存椂鍊嶉€燂紝false 鎭㈠
   final ValueChanged<bool> onTemporarySpeed;
 
-  /// 长按开始时先隐藏控件
+  /// 闀挎寜寮€濮嬫椂鍏堥殣钘忔帶浠?
   final VoidCallback onHideControls;
 
   @override
@@ -52,7 +52,6 @@ class MobileGestureLayer extends StatefulWidget {
 enum _DragMode { none, horizontalSeek, verticalVolume, verticalBrightness }
 
 class _MobileGestureLayerState extends State<MobileGestureLayer> {
-  static const _doubleTapStep = Duration(seconds: 10);
   static const _doubleTapWindow = Duration(milliseconds: 300);
 
   _DragMode _dragMode = _DragMode.none;
@@ -68,12 +67,12 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
   bool _showVolumePreview = false;
   bool _showBrightnessPreview = false;
 
-  // 双击检测
+  // 鍙屽嚮妫€娴?
   _DoubleTapHint? _doubleTapHint;
   Timer? _doubleTapHintTimer;
   bool _longPressActive = false;
 
-  // 单击 vs 双击区分
+  // 鍗曞嚮 vs 鍙屽嚮鍖哄垎
   Timer? _singleTapTimer;
   bool _waitingForDoubleTap = false;
 
@@ -120,52 +119,31 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
     );
   }
 
-  // -------- 单击 vs 双击 --------
+  // -------- 鍗曞嚮 vs 鍙屽嚮 --------
   void _handleTapUp(TapUpDetails details) {
-    final position = details.localPosition;
-
     if (_waitingForDoubleTap) {
-      // 这是双击的第二下
       _singleTapTimer?.cancel();
       _waitingForDoubleTap = false;
-      _handleDoubleTap(position);
+      _handleDoubleTap();
       return;
     }
 
-    // 记录位置，等待可能的双击
     _waitingForDoubleTap = true;
     _singleTapTimer = Timer(_doubleTapWindow, () {
       _waitingForDoubleTap = false;
-      // 超时没有第二下 → 单击
       widget.onTapToggleControls();
     });
   }
 
-  void _handleDoubleTap(Offset position) {
-    final dx = position.dx;
-    final third = _stageWidth / 3;
-    if (dx < third) {
-      _seekBy(-_doubleTapStep);
-      _showHint(_DoubleTapHint.backward);
-    } else if (dx > _stageWidth - third) {
-      _seekBy(_doubleTapStep);
-      _showHint(_DoubleTapHint.forward);
-    } else {
-      // 中间区域：暂停/播放
-      unawaited(widget.onTogglePlayPause());
-    }
+  void _cancelPendingTap() {
+    _singleTapTimer?.cancel();
+    _waitingForDoubleTap = false;
   }
 
-  void _seekBy(Duration delta) {
-    final next = _currentPosition + delta;
-    final duration = _currentDuration;
-    final clamped = duration == Duration.zero
-        ? next
-        : Duration(
-            milliseconds:
-                next.inMilliseconds.clamp(0, duration.inMilliseconds),
-          );
-    widget.onSeek(clamped);
+  void _handleDoubleTap() {
+    final playing = widget.player.state.playing;
+    unawaited(widget.onTogglePlayPause());
+    _showHint(playing ? _DoubleTapHint.pause : _DoubleTapHint.play);
   }
 
   void _showHint(_DoubleTapHint hint) {
@@ -177,8 +155,9 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
     });
   }
 
-  // -------- 长按 2x --------
+  // -------- 闀挎寜 2x --------
   void _handleLongPressStart(LongPressStartDetails _) {
+    _cancelPendingTap();
     _longPressActive = true;
     widget.onHideControls();
     widget.onTemporarySpeed(true);
@@ -192,8 +171,9 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
     if (mounted) setState(() {});
   }
 
-  // -------- 水平拖动 = 进度（全局生效） --------
+  // -------- 姘村钩鎷栧姩 = 杩涘害锛堝叏灞€鐢熸晥锛?--------
   void _handleHorizontalStart(DragStartDetails details) {
+    _cancelPendingTap();
     _dragMode = _DragMode.horizontalSeek;
     _horizontalAccum = 0;
     _seekPreviewStart = _currentPosition;
@@ -224,8 +204,9 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
     setState(() => _showSeekPreview = false);
   }
 
-  // -------- 垂直拖动 --------
+  // -------- 鍨傜洿鎷栧姩 --------
   void _handleVerticalStart(DragStartDetails details) {
+    _cancelPendingTap();
     final dx = details.localPosition.dx;
     if (dx > _stageWidth / 2) {
       _dragMode = _DragMode.verticalVolume;
@@ -268,7 +249,7 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
     });
   }
 
-  // -------- 浮层 --------
+  // -------- 娴眰 --------
   Widget _buildSeekPreview() {
     final duration = _currentDuration;
     final delta = _seekPreviewTarget - _seekPreviewStart;
@@ -404,36 +385,31 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
 
   Widget _buildDoubleTapHint() {
     final hint = _doubleTapHint!;
-    final isForward = hint == _DoubleTapHint.forward;
-    return Align(
-      alignment: isForward ? Alignment.centerRight : Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 36),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isForward
-                    ? Icons.fast_forward_rounded
-                    : Icons.fast_rewind_rounded,
+    final isPause = hint == _DoubleTapHint.pause;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isPause ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 28,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              isPause ? '暂停' : '播放',
+              style: const TextStyle(
                 color: Colors.white,
+                fontWeight: FontWeight.w700,
               ),
-              const SizedBox(width: 6),
-              Text(
-                isForward ? '+10s' : '-10s',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -456,9 +432,11 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
               Icon(Icons.fast_forward_rounded, color: Colors.white, size: 16),
               SizedBox(width: 4),
               Text(
-                '2.0x 快进中',
+                '2.0x 倍速',
                 style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -468,14 +446,6 @@ class _MobileGestureLayerState extends State<MobileGestureLayer> {
   }
 }
 
-/// 桌面端鼠标悬停 + 点击检测。
-///
-/// 分为两个 widget 配合使用：
-/// - [DesktopHoverDetector]：放在 Stack 最顶层，只做 MouseRegion 悬停检测，
-///   不拦截任何点击。
-/// - [DesktopClickDetector]：放在控件层**下面**（视频面之上），用 opaque
-///   GestureDetector 接收点击。当控件可见时，控件层的按钮/进度条在更上层
-///   会先消费事件，点击不会到达这里；只有点击到空白区域时才触发。
 class DesktopHoverDetector extends StatefulWidget {
   const DesktopHoverDetector({
     required this.onShowControls,
@@ -542,10 +512,10 @@ class _DesktopHoverDetectorState extends State<DesktopHoverDetector> {
   }
 }
 
-/// 桌面端点击检测层。放在控件层**下面**。
+/// 妗岄潰绔偣鍑绘娴嬪眰銆傛斁鍦ㄦ帶浠跺眰**涓嬮潰**銆?
 ///
-/// - 单击空白区域：播放/暂停
-/// - 双击空白区域：切换全屏
+/// - 鍗曞嚮绌虹櫧鍖哄煙锛氭挱鏀?鏆傚仠
+/// - 鍙屽嚮绌虹櫧鍖哄煙锛氬垏鎹㈠叏灞?
 class DesktopClickDetector extends StatefulWidget {
   const DesktopClickDetector({
     required this.onTogglePlayPause,
@@ -572,7 +542,7 @@ class _DesktopClickDetectorState extends State<DesktopClickDetector> {
 
   void _handleTap() {
     if (_singleClickTimer != null) {
-      // 双击
+      // 鍙屽嚮
       _singleClickTimer!.cancel();
       _singleClickTimer = null;
       unawaited(widget.onToggleFullscreen());
@@ -594,7 +564,7 @@ class _DesktopClickDetectorState extends State<DesktopClickDetector> {
   }
 }
 
-enum _DoubleTapHint { forward, backward }
+enum _DoubleTapHint { play, pause }
 
 String _formatDuration(Duration duration) {
   final hours = duration.inHours;

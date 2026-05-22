@@ -3,10 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
-import '../../detail/presentation/detail_page.dart';
 import '../../favorites/domain/favorites_repository.dart';
 import '../../history/domain/history_repository.dart';
-import '../../player/presentation/player_page.dart';
+import '../../player/application/resume_play_launcher.dart';
 
 class MyPage extends ConsumerStatefulWidget {
   const MyPage({super.key});
@@ -189,8 +188,13 @@ class _HistoryManagerTabState extends ConsumerState<_HistoryManagerTab> {
         (item.episode ?? '').toLowerCase().contains(_keyword);
   }
 
-  String _historyKeyOf(WatchHistoryItem item) =>
-      '${item.sourceKey}::${item.vodId}';
+  String _historyKeyOf(WatchHistoryItem item) => [
+        item.sourceKey,
+        item.vodId,
+        item.sourceIndex?.toString() ?? '',
+        item.episodeIndex?.toString() ?? '',
+        item.episode ?? '',
+      ].join('::');
 
   Future<void> _refresh() async {
     ref.invalidate(historyItemsProvider);
@@ -229,72 +233,7 @@ class _HistoryManagerTabState extends ConsumerState<_HistoryManagerTab> {
   }
 
   Future<void> _resumePlay(WatchHistoryItem item) async {
-    // 显示加载指示
-    _showMessage('正在加载播放信息...');
-    try {
-      final detail = await ref.read(searchRepositoryProvider).getDetail(
-            sourceKey: item.sourceKey,
-            vodId: item.vodId,
-          );
-      if (!mounted) return;
-      if (detail.vodPlayUrl.trim().isEmpty) {
-        // 没有播放链接，回退到详情页
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => DetailPage(initialItem: detail),
-          ),
-        );
-        return;
-      }
-      final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
-      final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
-      final referer = site?.detailUrl ?? site?.baseUrl ?? '';
-      final playResult = await ref
-          .read(playRepositoryProvider)
-          .parsePlayUrl(detail.vodPlayUrl, referer: referer);
-      if (!mounted) return;
-      if (playResult.sources.isEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => DetailPage(initialItem: detail),
-          ),
-        );
-        return;
-      }
-      // 定位到记录的集数
-      var si = 0, ei = 0;
-      if (item.episode != null && item.episode!.isNotEmpty) {
-        for (var s = 0; s < playResult.sources.length; s++) {
-          final eps = playResult.sources[s].episodes;
-          for (var e = 0; e < eps.length; e++) {
-            if (eps[e].name == item.episode) {
-              si = s;
-              ei = e;
-              break;
-            }
-          }
-        }
-      }
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => PlayerPage(
-            detail: detail,
-            playResult: playResult,
-            initialSourceIndex: si,
-            initialEpisodeIndex: ei,
-            initialProgress: item.progress,
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      _showMessage('加载失败，跳转到详情页');
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => DetailPage(initialItem: VodItem.fromHistory(item)),
-        ),
-      );
-    }
+    await openPlayerFromHistory(context, ref, item);
   }
 
   Future<void> _deleteOne(WatchHistoryItem item) async {
@@ -310,6 +249,9 @@ class _HistoryManagerTabState extends ConsumerState<_HistoryManagerTab> {
       await _historyRepository.deleteHistory(
         vodId: item.vodId,
         sourceKey: item.sourceKey,
+        sourceIndex: item.sourceIndex,
+        episodeIndex: item.episodeIndex,
+        episode: item.episode,
       );
       await _refresh();
       if (mounted) {
@@ -337,6 +279,9 @@ class _HistoryManagerTabState extends ConsumerState<_HistoryManagerTab> {
         await _historyRepository.deleteHistory(
           vodId: item.vodId,
           sourceKey: item.sourceKey,
+          sourceIndex: item.sourceIndex,
+          episodeIndex: item.episodeIndex,
+          episode: item.episode,
         );
       }
       setState(() {
@@ -557,7 +502,7 @@ class _FavoritesManagerTabState extends ConsumerState<_FavoritesManagerTab> {
     });
   }
 
-  void _handleFavoriteTap(FavoriteItem item) {
+  Future<void> _handleFavoriteTap(FavoriteItem item) async {
     if (_selectionMode) {
       _handleSelectionChange(
         _favoriteKeyOf(item),
@@ -566,11 +511,7 @@ class _FavoritesManagerTabState extends ConsumerState<_FavoritesManagerTab> {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DetailPage(initialItem: VodItem.fromFavorite(item)),
-      ),
-    );
+    await openPlayerFromFavorite(context, ref, item);
   }
 
   Future<void> _deleteOne(FavoriteItem item) async {
