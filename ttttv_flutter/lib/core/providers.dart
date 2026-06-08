@@ -5,8 +5,7 @@ export '../features/settings/application/app_settings_notifier.dart';
 export '../features/settings/domain/app_settings.dart';
 
 import '../features/home/data/douban_repository.dart';
-import '../features/settings/domain/app_settings.dart'
-    show DoubanDataSource;
+import '../features/settings/domain/app_settings.dart' show DoubanDataSource;
 import '../features/favorites/data/local_favorites_repository.dart';
 import '../features/favorites/domain/favorites_repository.dart';
 import '../features/history/data/local_history_repository.dart';
@@ -89,7 +88,12 @@ final cacheUsageProvider = FutureProvider<CacheUsage>((ref) async {
 final searchControllerProvider =
     StateNotifierProvider<SearchController, SearchState>((ref) {
   final repository = ref.watch(searchRepositoryProvider);
-  return SearchController(repository);
+  final doubanRepository = ref.watch(doubanRepositoryProvider);
+  return SearchController(
+    repository,
+    doubanRepository,
+    () => ref.read(doubanDataSourceProvider),
+  );
 });
 
 final historyItemsProvider =

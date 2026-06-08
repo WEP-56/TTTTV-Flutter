@@ -41,6 +41,9 @@ class PlayerControlsOverlay extends StatelessWidget {
     this.compact = false,
     this.fullscreenTooltip,
     this.fullscreenExitTooltip,
+    this.topActionIcon,
+    this.topActionTooltip,
+    this.onTopAction,
     super.key,
   });
 
@@ -72,6 +75,9 @@ class PlayerControlsOverlay extends StatelessWidget {
   final bool episodesActive;
   final String? fullscreenTooltip;
   final String? fullscreenExitTooltip;
+  final IconData? topActionIcon;
+  final String? topActionTooltip;
+  final VoidCallback? onTopAction;
 
   /// 紧凑模式下隐藏部分次要按钮（手机竖屏 / 极小窗口）。
   final bool compact;
@@ -108,6 +114,9 @@ class PlayerControlsOverlay extends StatelessWidget {
                 compact: compact,
                 onBackPressed: onBackPressed,
                 onDragWindow: onDragWindow,
+                topActionIcon: topActionIcon,
+                topActionTooltip: topActionTooltip,
+                onTopAction: onTopAction,
                 onMore: () => _openMoreSheet(context),
               ),
             ),
@@ -174,6 +183,9 @@ class _TopBar extends StatelessWidget {
     required this.onBackPressed,
     required this.onMore,
     this.onDragWindow,
+    this.topActionIcon,
+    this.topActionTooltip,
+    this.onTopAction,
   });
 
   final String title;
@@ -182,6 +194,9 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onBackPressed;
   final VoidCallback onMore;
   final VoidCallback? onDragWindow;
+  final IconData? topActionIcon;
+  final String? topActionTooltip;
+  final VoidCallback? onTopAction;
 
   @override
   Widget build(BuildContext context) {
@@ -244,6 +259,15 @@ class _TopBar extends StatelessWidget {
             compact: compact,
             onPressed: onMore,
           ),
+          if (topActionIcon != null && onTopAction != null) ...[
+            const SizedBox(width: 8),
+            _CircleIconButton(
+              icon: topActionIcon!,
+              tooltip: topActionTooltip ?? '',
+              compact: compact,
+              onPressed: onTopAction!,
+            ),
+          ],
         ],
       ),
     );

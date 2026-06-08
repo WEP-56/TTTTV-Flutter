@@ -4,14 +4,17 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
+import '../../../core/platform/screen_brightness.dart';
 import '../../../core/providers.dart';
 import '../../player/presentation/widgets/player_controls_overlay.dart';
 import '../../player/presentation/widgets/player_episode_panel.dart';
+import '../../player/presentation/widgets/player_gesture_layer.dart';
 import '../../player/presentation/widgets/player_video_surface.dart';
 
 class DetailPage extends ConsumerStatefulWidget {
@@ -24,9 +27,17 @@ class DetailPage extends ConsumerStatefulWidget {
 }
 
 class _DetailPageState extends ConsumerState<DetailPage> {
+  static const Duration _seekStep = Duration(seconds: 10);
+  static const double _volumeStep = 5;
+  static const int _speedProbeBytes = 256 * 1024;
+
   late VodItem _detail;
   late VodItem _infoDetail;
   final List<_PlayableLine> _playableLines = [];
+  final Map<int, _LineSpeedTest> _lineSpeedTests = {};
+  final Set<int> _lineSpeedTesting = {};
+  final FocusNode _keyboardFocusNode =
+      FocusNode(debugLabel: 'detail-inline-player');
   bool _loading = true;
   bool _favoriteLoading = false;
   bool _sourceToggleLoading = false;
@@ -39,6 +50,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   int _selectedEpisodeIndex = 0;
   late final Player _inlinePlayer;
   late final VideoController _inlineVideoController;
+  late final PlatformFullscreenBinding _fullscreenBinding;
+  late final Dio _speedTestDio;
   late final StreamSubscription<bool> _playingSubscription;
   late final StreamSubscription<bool> _bufferingSubscription;
   late final StreamSubscription<Duration> _bufferSubscription;
@@ -48,10 +61,15 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   bool _isSeeking = false;
   bool _showPlayerControls = true;
   bool _playerExpanded = false;
+  bool _traditionalFullscreen = false;
+  bool _wasExpandedBeforeTraditionalFullscreen = false;
   bool _episodeDrawerOpen = false;
   bool _mobileImmersiveApplied = false;
+  bool _temporarySpeedActive = false;
   double _volume = 100;
   double _playbackSpeed = 1;
+  double _temporarySpeedSaved = 1;
+  double _brightness = 1;
   int _fitMode = 0;
   Duration _bufferPosition = Duration.zero;
   String? _inlineError;
@@ -103,25 +121,46 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     _infoDetail = widget.initialItem;
     _inlinePlayer = Player();
     _inlineVideoController = VideoController(_inlinePlayer);
+    _speedTestDio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 4),
+        receiveTimeout: const Duration(seconds: 6),
+        sendTimeout: const Duration(seconds: 4),
+      ),
+    );
+    _fullscreenBinding = PlatformFullscreenBinding(
+      onEnterFullscreen: _handlePlatformEnteredFullscreen,
+      onLeaveFullscreen: _handlePlatformExitedFullscreen,
+    );
+    _fullscreenBinding.attach();
     _playingSubscription =
         _inlinePlayer.stream.playing.listen(_handleInlinePlayingChanged);
     _bufferingSubscription =
         _inlinePlayer.stream.buffering.listen(_handleInlineBufferingChanged);
     _bufferSubscription =
         _inlinePlayer.stream.buffer.listen(_handleInlineBufferChanged);
+    _keyboardFocusNode.requestFocus();
     unawaited(_inlinePlayer.setVolume(_volume));
+    unawaited(_loadScreenBrightness());
     _load();
   }
 
   @override
   void dispose() {
     _controlsHideTimer?.cancel();
+    _fullscreenBinding.detach();
     _playingSubscription.cancel();
     _bufferingSubscription.cancel();
     _bufferSubscription.cancel();
+    _keyboardFocusNode.dispose();
     if (_mobileImmersiveApplied) {
       unawaited(_restoreMobileInlineMode());
     }
+    unawaited(resetScreenBrightness());
+    if (_traditionalFullscreen) {
+      unawaited(setPlatformFullscreen(false));
+    }
+    _speedTestDio.close(force: true);
     unawaited(_inlinePlayer.dispose());
     super.dispose();
   }
@@ -131,6 +170,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       _loading = true;
       _error = null;
       _playableLines.clear();
+      _lineSpeedTests.clear();
+      _lineSpeedTesting.clear();
       _selectedLineIndex = 0;
     });
     try {
@@ -201,6 +242,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         _loading = false;
       });
       unawaited(_loadInlineEpisode(episodeIndex: ei));
+      unawaited(_startLineSpeedTests());
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -229,11 +271,18 @@ class _DetailPageState extends ConsumerState<DetailPage> {
 
     if (query.isNotEmpty) {
       final result = await ref.read(searchRepositoryProvider).search(query);
+      final seed = widget.initialItem;
       final normalizedQuery = _normalizeTitle(query);
       final exactMatches = result.items.where((item) {
         return _normalizeTitle(item.vodName) == normalizedQuery;
       }).toList();
-      final matches = exactMatches.isEmpty ? result.items : exactMatches;
+      final matches = exactMatches.isEmpty
+          ? result.items.toList(growable: false)
+          : exactMatches;
+      matches.sort((a, b) {
+        return _candidateRank(b, seed, normalizedQuery)
+            .compareTo(_candidateRank(a, seed, normalizedQuery));
+      });
       for (final item in matches.take(24)) {
         try {
           final detail = await ref.read(searchRepositoryProvider).getDetail(
@@ -248,6 +297,28 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
 
     return items;
+  }
+
+  int _candidateRank(VodItem item, VodItem seed, String normalizedQuery) {
+    var score = 0;
+    if (_normalizeTitle(item.vodName) == normalizedQuery) {
+      score += 30;
+    }
+    final seedYear = seed.vodYear?.trim();
+    final itemYear = item.vodYear?.trim();
+    if (seedYear != null &&
+        seedYear.isNotEmpty &&
+        itemYear != null &&
+        itemYear == seedYear) {
+      score += 12;
+    }
+    final seedType = _searchTypeKey(seed);
+    final itemType = _searchTypeKey(item);
+    if (seedType != null && itemType != null && seedType == itemType) {
+      score += 6;
+    }
+    score += _metadataScore(item);
+    return score;
   }
 
   VodItem _buildInfoDetail({
@@ -363,18 +434,158 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       return;
     }
     var bestIndex = _selectedLineIndex;
-    int? bestTime;
+    double? bestScore;
     for (var i = 0; i < _playableLines.length; i++) {
-      final time = _playableLines[i].site?.responseTimeMs;
-      if (time == null || time <= 0) {
+      final score = _sourceScore(i);
+      if (score == null) {
         continue;
       }
-      if (bestTime == null || time < bestTime) {
+      if (bestScore == null || score > bestScore) {
         bestIndex = i;
-        bestTime = time;
+        bestScore = score;
       }
     }
     await _selectLine(bestIndex);
+  }
+
+  double? _sourceScore(int index) {
+    final speedTest = _lineSpeedTests[index];
+    if (speedTest != null && speedTest.isSuccess) {
+      final speedScore =
+          (speedTest.speedKBps! / 1024).clamp(0.0, 1.0).toDouble() * 60;
+      final latencyScore =
+          (1 - (speedTest.pingMs! / 1200).clamp(0.0, 1.0).toDouble()) * 40;
+      return speedScore + latencyScore;
+    }
+    final siteLatency = _playableLines[index].site?.responseTimeMs;
+    if (siteLatency == null || siteLatency <= 0) {
+      return null;
+    }
+    return (1 - (siteLatency / 1500).clamp(0.0, 1.0).toDouble()) * 40;
+  }
+
+  Future<void> _startLineSpeedTests() async {
+    final indexes = List<int>.generate(_playableLines.length, (index) => index);
+    final halfBatch = (_playableLines.length / 2).ceil().clamp(1, 4);
+    for (var start = 0; start < indexes.length; start += halfBatch) {
+      if (!mounted) return;
+      final batch = indexes.skip(start).take(halfBatch);
+      await Future.wait(batch.map(_testLineSpeed));
+    }
+  }
+
+  Future<void> _testLineSpeed(int index) async {
+    if (index < 0 ||
+        index >= _playableLines.length ||
+        _lineSpeedTesting.contains(index)) {
+      return;
+    }
+    final line = _playableLines[index];
+    if (line.source.episodes.isEmpty) {
+      return;
+    }
+    final episode = line.source.episodes.length > 1
+        ? line.source.episodes[1]
+        : line.source.episodes.first;
+    setState(() {
+      _lineSpeedTesting.add(index);
+      _lineSpeedTests[index] = const _LineSpeedTest.testing();
+    });
+    try {
+      final result = await _measureEpisodeSpeed(episode);
+      if (!mounted) return;
+      setState(() {
+        _lineSpeedTesting.remove(index);
+        _lineSpeedTests[index] = result;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _lineSpeedTesting.remove(index);
+        _lineSpeedTests[index] = const _LineSpeedTest.failed();
+      });
+    }
+  }
+
+  Future<_LineSpeedTest> _measureEpisodeSpeed(PlayEpisode episode) async {
+    final url = episode.effectiveUrl;
+    final headers = episode.httpHeaders ?? const <String, String>{};
+    final pingMs = await _measurePing(url, headers);
+    final targetUrl = url.toLowerCase().contains('.m3u8')
+        ? await _resolveFirstM3u8Segment(url, headers)
+        : url;
+    final speed = await _measureDownloadSpeed(targetUrl, headers);
+    return _LineSpeedTest.success(
+      pingMs: pingMs ?? speed.pingMs,
+      speedKBps: speed.speedKBps,
+      bytesRead: speed.bytesRead,
+    );
+  }
+
+  Future<int?> _measurePing(String url, Map<String, String> headers) async {
+    final sw = Stopwatch()..start();
+    try {
+      await _speedTestDio.head<void>(
+        url,
+        options: Options(headers: headers, validateStatus: (_) => true),
+      );
+      return sw.elapsedMilliseconds;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> _resolveFirstM3u8Segment(
+    String url,
+    Map<String, String> headers,
+  ) async {
+    final response = await _speedTestDio.get<String>(
+      url,
+      options: Options(
+        headers: headers,
+        responseType: ResponseType.plain,
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    final text = response.data ?? '';
+    for (final rawLine in text.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) {
+        continue;
+      }
+      return Uri.parse(url).resolve(line).toString();
+    }
+    return url;
+  }
+
+  Future<_DownloadProbe> _measureDownloadSpeed(
+    String url,
+    Map<String, String> headers,
+  ) async {
+    final probeHeaders = <String, String>{
+      ...headers,
+      'Range': 'bytes=0-${_speedProbeBytes - 1}',
+    };
+    final sw = Stopwatch()..start();
+    final response = await _speedTestDio.get<List<int>>(
+      url,
+      options: Options(
+        headers: probeHeaders,
+        responseType: ResponseType.bytes,
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+    final elapsedMs = sw.elapsedMilliseconds.clamp(1, 1 << 31);
+    final bytes = response.data?.length ?? 0;
+    if (bytes <= 0) {
+      throw StateError('empty speed probe');
+    }
+    final speedKBps = bytes / 1024 / (elapsedMs / 1000);
+    return _DownloadProbe(
+      pingMs: elapsedMs,
+      speedKBps: speedKBps,
+      bytesRead: bytes,
+    );
   }
 
   void _handleInlinePlayingChanged(bool playing) {
@@ -397,6 +608,28 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     setState(() => _bufferPosition = buffer);
   }
 
+  void _handlePlatformEnteredFullscreen() {
+    if (!mounted) return;
+    setState(() {
+      _traditionalFullscreen = true;
+      _showPlayerControls = true;
+    });
+    _startControlsHideTimer();
+  }
+
+  void _handlePlatformExitedFullscreen() {
+    if (!mounted) return;
+    setState(() {
+      _traditionalFullscreen = false;
+      if (!_wasExpandedBeforeTraditionalFullscreen) {
+        _playerExpanded = false;
+        _episodeDrawerOpen = false;
+      }
+      _showPlayerControls = true;
+    });
+    _startControlsHideTimer();
+  }
+
   void _startControlsHideTimer() {
     _controlsHideTimer?.cancel();
     if (!_inlinePlayer.state.playing || _episodeDrawerOpen) return;
@@ -406,10 +639,47 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     });
   }
 
+  void _cancelControlsHideTimer() {
+    _controlsHideTimer?.cancel();
+  }
+
   void _showControlsNow() {
     if (!mounted) return;
-    setState(() => _showPlayerControls = true);
+    if (!_showPlayerControls) {
+      setState(() => _showPlayerControls = true);
+    }
     _startControlsHideTimer();
+  }
+
+  void _toggleControls() {
+    if (!mounted) return;
+    _keyboardFocusNode.requestFocus();
+    setState(() => _showPlayerControls = !_showPlayerControls);
+    if (_showPlayerControls) {
+      _startControlsHideTimer();
+    } else {
+      _cancelControlsHideTimer();
+    }
+  }
+
+  void _desktopShowControls() {
+    if (!mounted) return;
+    if (!_showPlayerControls) {
+      setState(() => _showPlayerControls = true);
+    }
+  }
+
+  void _desktopHideControls() {
+    if (!mounted || _episodeDrawerOpen || !_inlinePlayer.state.playing) return;
+    if (_showPlayerControls) {
+      setState(() => _showPlayerControls = false);
+    }
+  }
+
+  void _forceHideControls() {
+    if (!mounted) return;
+    _cancelControlsHideTimer();
+    setState(() => _showPlayerControls = false);
   }
 
   Future<void> _toggleInlinePlayPause() async {
@@ -440,21 +710,127 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     _showControlsNow();
   }
 
+  Future<void> _seekRelative(Duration delta) async {
+    await _seekInline(_inlinePlayer.state.position + delta);
+  }
+
   Future<void> _setInlineVolume(double value) async {
     final next = value.clamp(0, 100).toDouble();
     setState(() => _volume = next);
     await _inlinePlayer.setVolume(next);
   }
 
+  Future<void> _adjustInlineVolume(double delta) async {
+    await _setInlineVolume(_volume + delta);
+    _showControlsNow();
+  }
+
   Future<void> _setInlineSpeed(double value) async {
+    _temporarySpeedSaved = value;
     setState(() => _playbackSpeed = value);
     await _inlinePlayer.setRate(value);
     _showControlsNow();
   }
 
+  Future<void> _setTemporarySpeed(bool active) async {
+    if (active == _temporarySpeedActive) return;
+    if (active) {
+      _temporarySpeedSaved = _playbackSpeed;
+      _temporarySpeedActive = true;
+      await _inlinePlayer.setRate(2);
+    } else {
+      _temporarySpeedActive = false;
+      await _inlinePlayer.setRate(_temporarySpeedSaved);
+    }
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _loadScreenBrightness() async {
+    final brightness = await readScreenBrightness();
+    if (!mounted) return;
+    setState(() => _brightness = brightness);
+  }
+
+  Future<void> _setBrightness(double value) async {
+    final next = value.clamp(0.0, 1.0).toDouble();
+    setState(() => _brightness = next);
+    await setScreenBrightness(next);
+  }
+
   void _setInlineFit(int value) {
     setState(() => _fitMode = value);
     _showControlsNow();
+  }
+
+  Future<void> _handleKeyEvent(KeyEvent event) async {
+    final key = event.logicalKey;
+
+    if (event is KeyRepeatEvent && key == LogicalKeyboardKey.arrowRight) {
+      if (!_temporarySpeedActive) {
+        await _setTemporarySpeed(true);
+      }
+      return;
+    }
+
+    if (event is KeyUpEvent && key == LogicalKeyboardKey.arrowRight) {
+      if (_temporarySpeedActive) {
+        await _setTemporarySpeed(false);
+      }
+      return;
+    }
+
+    if (event is! KeyDownEvent) return;
+
+    if (key == LogicalKeyboardKey.escape) {
+      if (_episodeDrawerOpen) {
+        _closeEpisodeDrawer();
+        return;
+      }
+      if (_traditionalFullscreen) {
+        await _exitTraditionalFullscreen();
+        return;
+      }
+      if (_playerExpanded) {
+        await _exitExpandedPlayer();
+        return;
+      }
+    }
+    if (key == LogicalKeyboardKey.space) {
+      await _toggleInlinePlayPause();
+      return;
+    }
+    if (key == LogicalKeyboardKey.f11 || key == LogicalKeyboardKey.keyF) {
+      await _toggleTraditionalFullscreen();
+      return;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      _toggleEpisodeDrawer();
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      await _seekRelative(-_seekStep);
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      await _seekRelative(_seekStep);
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      await _adjustInlineVolume(_volumeStep);
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      await _adjustInlineVolume(-_volumeStep);
+      return;
+    }
+    if (key == LogicalKeyboardKey.pageUp && _canPlayPrevious) {
+      await _selectPreviousEpisode();
+      return;
+    }
+    if (key == LogicalKeyboardKey.pageDown && _canPlayNext) {
+      await _selectNextEpisode();
+    }
   }
 
   Future<void> _selectPreviousEpisode() async {
@@ -493,6 +869,52 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
   }
 
+  Future<void> _toggleTraditionalFullscreen() async {
+    if (!isDesktopPlatform) {
+      await _toggleExpandedPlayer();
+      return;
+    }
+    if (_traditionalFullscreen) {
+      await _exitTraditionalFullscreen();
+    } else {
+      await _enterTraditionalFullscreen();
+    }
+  }
+
+  Future<void> _enterTraditionalFullscreen() async {
+    if (_traditionalFullscreen) return;
+    _wasExpandedBeforeTraditionalFullscreen = _playerExpanded;
+    if (!_playerExpanded) {
+      setState(() {
+        _playerExpanded = true;
+        _showPlayerControls = true;
+      });
+    }
+    await setPlatformFullscreen(true);
+    if (!mounted) return;
+    setState(() {
+      _traditionalFullscreen = true;
+      _showPlayerControls = true;
+    });
+    await _inlinePlayer.play();
+    _startControlsHideTimer();
+  }
+
+  Future<void> _exitTraditionalFullscreen() async {
+    if (!_traditionalFullscreen) return;
+    await setPlatformFullscreen(false);
+    if (!mounted) return;
+    setState(() {
+      _traditionalFullscreen = false;
+      if (!_wasExpandedBeforeTraditionalFullscreen) {
+        _playerExpanded = false;
+        _episodeDrawerOpen = false;
+      }
+      _showPlayerControls = true;
+    });
+    _startControlsHideTimer();
+  }
+
   Future<void> _enterExpandedPlayer() async {
     if (_playerExpanded) return;
     setState(() {
@@ -513,6 +935,10 @@ class _DetailPageState extends ConsumerState<DetailPage> {
 
   Future<void> _exitExpandedPlayer() async {
     if (!_playerExpanded) return;
+    if (_traditionalFullscreen) {
+      await _exitTraditionalFullscreen();
+      return;
+    }
     setState(() {
       _playerExpanded = false;
       _episodeDrawerOpen = false;
@@ -750,7 +1176,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         onPopInvokedWithResult: (_, __) => unawaited(_exitExpandedPlayer()),
         child: Scaffold(
           backgroundColor: Colors.black,
-          body: _buildExpandedPlayer(),
+          body: KeyboardListener(
+            focusNode: _keyboardFocusNode,
+            autofocus: true,
+            onKeyEvent: _handleKeyEvent,
+            child: _buildExpandedPlayer(),
+          ),
         ),
       );
     }
@@ -794,7 +1225,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                 ),
         ],
       ),
-      body: content,
+      body: KeyboardListener(
+        focusNode: _keyboardFocusNode,
+        autofocus: true,
+        onKeyEvent: _handleKeyEvent,
+        child: content,
+      ),
     );
   }
 
@@ -851,6 +1287,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                   const SizedBox(height: 10),
                   _EpisodeGridBox(
                     source: _selectedLine?.source,
+                    speedTest: _lineSpeedTests[_selectedLineIndex],
                     selectedEpisodeIndex: _selectedEpisodeIndex,
                     resumeEpisodeIndex: _resumeEpisodeIndex,
                     resumeProgress: _resumeProgress,
@@ -919,81 +1356,136 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         : _isBuffering
             ? '缓冲中...'
             : '加载中...';
+    final showDesktopFullWindowAction =
+        isDesktopPlatform && !_traditionalFullscreen;
+    final topActionIcon = showDesktopFullWindowAction
+        ? expanded
+            ? Icons.close_fullscreen_rounded
+            : Icons.open_in_full_rounded
+        : null;
+    final topActionTooltip = showDesktopFullWindowAction
+        ? expanded
+            ? '退出全窗口'
+            : '全窗口播放'
+        : null;
+    final VoidCallback? onTopAction = showDesktopFullWindowAction
+        ? () => unawaited(
+              expanded ? _exitExpandedPlayer() : _enterExpandedPlayer(),
+            )
+        : null;
 
     return ColoredBox(
       color: Colors.black,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          setState(() => _showPlayerControls = !_showPlayerControls);
-          if (_showPlayerControls) _startControlsHideTimer();
-        },
-        onDoubleTap: () => unawaited(_toggleExpandedPlayer()),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (!_inlineInitialized && !_inlineLoading && _inlineError == null)
-              _PosterBackdrop(detail: _infoDetail),
-            if (_inlineInitialized || _inlineLoading || _inlineError != null)
-              PlayerVideoSurface(
-                controller: _inlineVideoController,
-                initialized: _inlineInitialized,
-                fit: _videoFit,
-                showLoadingIndicator: showLoading,
-                loadingLabel: loadingLabel,
-                errorText: _inlineError,
-                onRetry: () => _loadInlineEpisode(
-                  episodeIndex: _selectedEpisodeIndex,
-                  play: true,
-                ),
-              ),
-            _buildCenterPauseIndicator(),
-            AnimatedOpacity(
-              opacity: _showPlayerControls ? 1 : 0,
-              duration: const Duration(milliseconds: 180),
-              child: AbsorbPointer(
-                absorbing: !_showPlayerControls,
-                child: PlayerControlsOverlay(
-                  title: _infoDetail.vodName,
-                  subtitle: '${source?.name ?? '播放源'} · ${episode?.name ?? ''}',
-                  player: _inlinePlayer,
-                  bufferPosition: _bufferPosition,
-                  fullscreen: expanded,
-                  canPlayPrevious: _canPlayPrevious,
-                  canPlayNext: _canPlayNext,
-                  volume: _volume,
-                  playbackSpeed: _playbackSpeed,
-                  fitMode: _fitMode,
-                  fitLabel: _fitLabel,
-                  speedOptions: const [0.5, 0.75, 1, 1.25, 1.5, 2],
-                  episodesActive: _episodeDrawerOpen,
-                  compact: compact,
-                  fullscreenTooltip: isMobilePlatform ? '全屏播放' : '全窗口播放',
-                  fullscreenExitTooltip: isMobilePlatform ? '退出全屏' : '退出全窗口',
-                  onBackPressed: () {
-                    if (_playerExpanded) {
-                      unawaited(_exitExpandedPlayer());
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  onPlayPause: _toggleInlinePlayPause,
-                  onSeek: _seekInline,
-                  onSpeedSelected: _setInlineSpeed,
-                  onFitSelected: _setInlineFit,
-                  onVolumeChanged: _setInlineVolume,
-                  onToggleFullscreen: _toggleExpandedPlayer,
-                  onToggleEpisodes: _toggleEpisodeDrawer,
-                  onPreviousEpisode:
-                      _canPlayPrevious ? _selectPreviousEpisode : null,
-                  onNextEpisode: _canPlayNext ? _selectNextEpisode : null,
-                  onInteractionStart: () => _controlsHideTimer?.cancel(),
-                  onInteractionEnd: _startControlsHideTimer,
-                ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (!_inlineInitialized && !_inlineLoading && _inlineError == null)
+            _PosterBackdrop(detail: _infoDetail),
+          if (_inlineInitialized || _inlineLoading || _inlineError != null)
+            PlayerVideoSurface(
+              controller: _inlineVideoController,
+              initialized: _inlineInitialized,
+              fit: _videoFit,
+              showLoadingIndicator: showLoading,
+              loadingLabel: loadingLabel,
+              errorText: _inlineError,
+              onRetry: () => _loadInlineEpisode(
+                episodeIndex: _selectedEpisodeIndex,
+                play: true,
               ),
             ),
-          ],
-        ),
+          _buildCenterPauseIndicator(),
+          if (isMobilePlatform && expanded)
+            MobileGestureLayer(
+              player: _inlinePlayer,
+              volume: _volume,
+              brightness: _brightness,
+              onTapToggleControls: _toggleControls,
+              onSeek: _seekInline,
+              onTogglePlayPause: _toggleInlinePlayPause,
+              onVolumeChanged: (value) => unawaited(_setInlineVolume(value)),
+              onBrightnessChanged: (value) => unawaited(_setBrightness(value)),
+              onTemporarySpeed: (active) =>
+                  unawaited(_setTemporarySpeed(active)),
+              onHideControls: _forceHideControls,
+            )
+          else
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                _keyboardFocusNode.requestFocus();
+                if (isDesktopPlatform) {
+                  unawaited(_toggleInlinePlayPause());
+                } else {
+                  _toggleControls();
+                }
+              },
+              onDoubleTap: isDesktopPlatform
+                  ? () => unawaited(_toggleExpandedPlayer())
+                  : null,
+              child: const SizedBox.expand(),
+            ),
+          AnimatedOpacity(
+            opacity: _showPlayerControls ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: AbsorbPointer(
+              absorbing: !_showPlayerControls,
+              child: PlayerControlsOverlay(
+                title: _infoDetail.vodName,
+                subtitle: '${source?.name ?? '播放源'} · ${episode?.name ?? ''}',
+                player: _inlinePlayer,
+                bufferPosition: _bufferPosition,
+                fullscreen:
+                    isDesktopPlatform ? _traditionalFullscreen : expanded,
+                canPlayPrevious: _canPlayPrevious,
+                canPlayNext: _canPlayNext,
+                volume: _volume,
+                playbackSpeed: _playbackSpeed,
+                fitMode: _fitMode,
+                fitLabel: _fitLabel,
+                speedOptions: const [0.5, 0.75, 1, 1.25, 1.5, 2],
+                episodesActive: _episodeDrawerOpen,
+                compact: compact,
+                fullscreenTooltip: '全屏播放',
+                fullscreenExitTooltip: '退出全屏',
+                topActionIcon: topActionIcon,
+                topActionTooltip: topActionTooltip,
+                onTopAction: onTopAction,
+                onBackPressed: () {
+                  if (_traditionalFullscreen) {
+                    unawaited(_exitTraditionalFullscreen());
+                  } else if (_playerExpanded) {
+                    unawaited(_exitExpandedPlayer());
+                  } else {
+                    Navigator.of(context).maybePop();
+                  }
+                },
+                onDragWindow: isDesktopPlatform && !_traditionalFullscreen
+                    ? () => Future<void>.microtask(startPlatformWindowDrag)
+                    : null,
+                onPlayPause: _toggleInlinePlayPause,
+                onSeek: _seekInline,
+                onSpeedSelected: _setInlineSpeed,
+                onFitSelected: _setInlineFit,
+                onVolumeChanged: _setInlineVolume,
+                onToggleFullscreen: isDesktopPlatform
+                    ? _toggleTraditionalFullscreen
+                    : _toggleExpandedPlayer,
+                onToggleEpisodes: _toggleEpisodeDrawer,
+                onPreviousEpisode:
+                    _canPlayPrevious ? _selectPreviousEpisode : null,
+                onNextEpisode: _canPlayNext ? _selectNextEpisode : null,
+                onInteractionStart: _cancelControlsHideTimer,
+                onInteractionEnd: _startControlsHideTimer,
+              ),
+            ),
+          ),
+          if (isDesktopPlatform)
+            DesktopHoverDetector(
+              onShowControls: _desktopShowControls,
+              onHideControls: _desktopHideControls,
+            ),
+        ],
       ),
     );
   }
@@ -1170,7 +1662,10 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                 ),
               ),
               TextButton.icon(
-                onPressed: _selectBestLine,
+                onPressed: () {
+                  _keyboardFocusNode.requestFocus();
+                  unawaited(_selectBestLine());
+                },
                 icon: const Icon(Icons.speed_rounded, size: 18),
                 label: const Text('自动优选'),
               ),
@@ -1192,10 +1687,29 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                   for (var index = 0; index < _playableLines.length; index++)
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        selected: index == _selectedLineIndex,
-                        label: Text(_playableLines[index].chipLabel),
-                        onSelected: (_) => _selectLine(index),
+                      child: Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: ChoiceChip(
+                          selected: index == _selectedLineIndex,
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_playableLines[index].source.name),
+                              const SizedBox(width: 6),
+                              _LatencyBadge(
+                                speedTest: _lineSpeedTests[index],
+                                fallbackLatencyMs:
+                                    _playableLines[index].site?.responseTimeMs,
+                              ),
+                            ],
+                          ),
+                          onSelected: (_) {
+                            _keyboardFocusNode.requestFocus();
+                            unawaited(_selectLine(index));
+                          },
+                        ),
                       ),
                     ),
                 ],
@@ -1213,6 +1727,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: _EpisodeGridBox(
           source: _selectedLine?.source,
+          speedTest: _lineSpeedTests[_selectedLineIndex],
           selectedEpisodeIndex: _selectedEpisodeIndex,
           resumeEpisodeIndex: _resumeEpisodeIndex,
           resumeProgress: _resumeProgress,
@@ -1233,14 +1748,188 @@ class _PlayableLine {
   final VodItem detail;
   final PlaySource source;
   final SiteWithStatus? site;
+}
 
-  String get chipLabel {
-    final speed = site?.responseTimeMs;
+enum _LineSpeedTestStatus { testing, success, failed }
+
+class _LineSpeedTest {
+  const _LineSpeedTest._({
+    required this.status,
+    this.pingMs,
+    this.speedKBps,
+    this.bytesRead,
+  });
+
+  const _LineSpeedTest.testing() : this._(status: _LineSpeedTestStatus.testing);
+
+  const _LineSpeedTest.failed() : this._(status: _LineSpeedTestStatus.failed);
+
+  const _LineSpeedTest.success({
+    required int pingMs,
+    required double speedKBps,
+    required int bytesRead,
+  }) : this._(
+          status: _LineSpeedTestStatus.success,
+          pingMs: pingMs,
+          speedKBps: speedKBps,
+          bytesRead: bytesRead,
+        );
+
+  final _LineSpeedTestStatus status;
+  final int? pingMs;
+  final double? speedKBps;
+  final int? bytesRead;
+
+  bool get isSuccess =>
+      status == _LineSpeedTestStatus.success &&
+      pingMs != null &&
+      speedKBps != null;
+
+  String get speedLabel {
+    final speed = speedKBps;
     if (speed == null || speed <= 0) {
-      return source.name;
+      return '未知';
     }
-    return '${source.name} · ${speed}ms';
+    if (speed >= 1024) {
+      return '${(speed / 1024).toStringAsFixed(1)} MB/s';
+    }
+    return '${speed.toStringAsFixed(1)} KB/s';
   }
+}
+
+class _DownloadProbe {
+  const _DownloadProbe({
+    required this.pingMs,
+    required this.speedKBps,
+    required this.bytesRead,
+  });
+
+  final int pingMs;
+  final double speedKBps;
+  final int bytesRead;
+}
+
+class _LatencyBadge extends StatelessWidget {
+  const _LatencyBadge({
+    required this.speedTest,
+    required this.fallbackLatencyMs,
+  });
+
+  final _LineSpeedTest? speedTest;
+  final int? fallbackLatencyMs;
+
+  @override
+  Widget build(BuildContext context) {
+    final test = speedTest;
+    if (test == null) {
+      final fallback = fallbackLatencyMs;
+      if (fallback == null || fallback <= 0) {
+        return const SizedBox.shrink();
+      }
+      return _LatencyPill(
+        label: '${fallback}ms',
+        color: _latencyColor(fallback),
+      );
+    }
+    return switch (test.status) {
+      _LineSpeedTestStatus.testing => const _LatencyPill(
+          label: '测...',
+          color: Colors.teal,
+        ),
+      _LineSpeedTestStatus.failed => const _LatencyPill(
+          label: '失败',
+          color: Colors.redAccent,
+        ),
+      _LineSpeedTestStatus.success => _LatencyPill(
+          label: '${test.pingMs}ms',
+          color: _latencyColor(test.pingMs ?? 0),
+        ),
+    };
+  }
+}
+
+class _LatencyPill extends StatelessWidget {
+  const _LatencyPill({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
+class _SpeedTestDetails extends StatelessWidget {
+  const _SpeedTestDetails({required this.speedTest});
+
+  final _LineSpeedTest? speedTest;
+
+  @override
+  Widget build(BuildContext context) {
+    final test = speedTest;
+    if (test == null) {
+      return const SizedBox.shrink();
+    }
+    if (test.status == _LineSpeedTestStatus.testing) {
+      return Text(
+        '测速中...',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Colors.tealAccent.shade400,
+              fontWeight: FontWeight.w700,
+            ),
+      );
+    }
+    if (!test.isSuccess) {
+      return Text(
+        '无测速数据',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Colors.redAccent,
+              fontWeight: FontWeight.w700,
+            ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          test.speedLabel,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Colors.greenAccent.shade400,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '${test.pingMs}ms',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Colors.orangeAccent,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Color _latencyColor(int latencyMs) {
+  if (latencyMs <= 0) return Colors.grey;
+  if (latencyMs <= 250) return Colors.greenAccent.shade400;
+  if (latencyMs <= 800) return Colors.orangeAccent;
+  return Colors.redAccent;
 }
 
 class _RightPanelCover extends StatelessWidget {
@@ -1338,6 +2027,7 @@ class _PosterBackdrop extends StatelessWidget {
 class _EpisodeGridBox extends StatelessWidget {
   const _EpisodeGridBox({
     required this.source,
+    required this.speedTest,
     required this.selectedEpisodeIndex,
     required this.resumeEpisodeIndex,
     required this.resumeProgress,
@@ -1345,6 +2035,7 @@ class _EpisodeGridBox extends StatelessWidget {
   });
 
   final PlaySource? source;
+  final _LineSpeedTest? speedTest;
   final int selectedEpisodeIndex;
   final int resumeEpisodeIndex;
   final double resumeProgress;
@@ -1362,12 +2053,18 @@ class _EpisodeGridBox extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 12, bottom: 8),
-          child: Text(
-            '剧集',
-            style: Theme.of(context)
-                .textTheme
-                .titleSmall
-                ?.copyWith(fontWeight: FontWeight.w700),
+          child: Row(
+            children: [
+              Text(
+                '剧集',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 10),
+              _SpeedTestDetails(speedTest: speedTest),
+            ],
           ),
         ),
         GridView.builder(
@@ -1886,6 +2583,30 @@ String _normalizeTitle(String value) {
       .replaceAll(RegExp(r'\s+'), '')
       .replaceAll(RegExp(r'[：:·・\-—_（）()【】\[\]]'), '')
       .toLowerCase();
+}
+
+String? _searchTypeKey(VodItem item) {
+  final type = item.typeName?.toLowerCase();
+  if (type != null && type.isNotEmpty) {
+    if (type.contains('movie') || type.contains('电影')) return 'movie';
+    if (type.contains('anime') || type.contains('动画') || type.contains('动漫')) {
+      return 'anime';
+    }
+    if (type.contains('tv') ||
+        type.contains('剧') ||
+        type.contains('综艺') ||
+        type.contains('show')) {
+      return 'tv';
+    }
+  }
+  final playUrl = item.vodPlayUrl;
+  if (playUrl.isEmpty) {
+    return null;
+  }
+  if (!playUrl.contains('#') && !playUrl.contains(r'$$$')) {
+    return 'movie';
+  }
+  return 'tv';
 }
 
 int _metadataScore(VodItem item) {

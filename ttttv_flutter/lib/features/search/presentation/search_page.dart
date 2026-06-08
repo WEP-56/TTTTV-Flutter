@@ -20,6 +20,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   String? _lastConsumedPendingSearch;
   Set<String> _selectedSourceKeys = {};
   bool _showSourceFilter = false;
+  SearchResultMode _searchMode = SearchResultMode.target;
 
   @override
   void initState() {
@@ -55,7 +56,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (trimmed.isEmpty) return;
     ref.read(searchControllerProvider.notifier).search(
           trimmed,
-          sourceKeys: _selectedSourceKeys.isEmpty ? null : _selectedSourceKeys,
+          mode: _searchMode,
+          sourceKeys: _searchMode == SearchResultMode.source &&
+                  _selectedSourceKeys.isNotEmpty
+              ? _selectedSourceKeys
+              : null,
         );
   }
 
@@ -103,14 +108,28 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onChanged: (_) => setState(() {}),
             ),
           ),
-          _SourceFilterRow(
-            showFilter: _showSourceFilter,
-            selectedKeys: _selectedSourceKeys,
-            onToggleFilter: () =>
-                setState(() => _showSourceFilter = !_showSourceFilter),
-            onSelectionChanged: (keys) =>
-                setState(() => _selectedSourceKeys = keys),
+          _SearchModeRow(
+            mode: _searchMode,
+            onChanged: (mode) {
+              setState(() => _searchMode = mode);
+              if (_controller.text.trim().isNotEmpty) {
+                _search(_controller.text);
+              }
+            },
           ),
+          if (_searchMode == SearchResultMode.source)
+            _SourceFilterRow(
+              showFilter: _showSourceFilter,
+              selectedKeys: _selectedSourceKeys,
+              onToggleFilter: () =>
+                  setState(() => _showSourceFilter = !_showSourceFilter),
+              onSelectionChanged: (keys) {
+                setState(() => _selectedSourceKeys = keys);
+                if (_controller.text.trim().isNotEmpty) {
+                  _search(_controller.text);
+                }
+              },
+            ),
           Expanded(
             child: _buildBody(context, state, colorScheme),
           ),
@@ -148,7 +167,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
 
     if (state.results.isNotEmpty) {
-      final targets = _aggregateVodTargets(state.results);
+      final targets = state.resultMode == SearchResultMode.target
+          ? state.results
+              .map((item) => _VodTarget(
+                    representative: item,
+                    sourceCount: 0,
+                    isMetadataTarget: true,
+                  ))
+              .toList(growable: false)
+          : _aggregateVodTargets(state.results);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -156,10 +183,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              state.isLoading
-                  ? '已找到 ${targets.length} 个影视，继续匹配片源中...'
-                  : '共 ${targets.length} 个影视'
-                      '${state.filteredCount > 0 ? '，已过滤 ${state.filteredCount} 条' : ''}',
+              _resultSummaryText(state, targets.length),
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
@@ -182,6 +206,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 return _VodCard(
                   item: item,
                   sourceCount: target.sourceCount,
+                  isMetadataTarget: target.isMetadataTarget,
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => DetailPage(initialItem: item),
@@ -268,17 +293,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       ],
     );
   }
+
+  String _resultSummaryText(SearchState state, int count) {
+    if (state.resultMode == SearchResultMode.target) {
+      return state.isLoading ? '正在搜索影视目标...' : '共 $count 个影视目标';
+    }
+    final filteredText =
+        state.filteredCount > 0 ? '，已过滤 ${state.filteredCount} 条' : '';
+    if (state.usedSourceFallback) {
+      return state.isLoading
+          ? '未找到明确目标，正在匹配片源...'
+          : '未找到明确目标，已回退片源聚合：$count 个影视$filteredText';
+    }
+    return state.isLoading
+        ? '已找到 $count 个影视，继续匹配片源中...'
+        : '共 $count 个影视$filteredText';
+  }
 }
 
 class _VodCard extends StatelessWidget {
   const _VodCard({
     required this.item,
     required this.sourceCount,
+    required this.isMetadataTarget,
     required this.onTap,
   });
 
   final VodItem item;
   final int sourceCount;
+  final bool isMetadataTarget;
   final VoidCallback onTap;
 
   @override
@@ -327,7 +370,7 @@ class _VodCard extends StatelessWidget {
                       ),
                 ),
               ),
-            if (sourceCount > 1)
+            if (!isMetadataTarget && sourceCount > 1)
               Padding(
                 padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
                 child: Text(
@@ -351,10 +394,12 @@ class _VodTarget {
   const _VodTarget({
     required this.representative,
     required this.sourceCount,
+    this.isMetadataTarget = false,
   });
 
   final VodItem representative;
   final int sourceCount;
+  final bool isMetadataTarget;
 }
 
 List<_VodTarget> _aggregateVodTargets(List<VodItem> items) {
@@ -447,6 +492,43 @@ class _Placeholder extends StatelessWidget {
               color: colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w600,
             ),
+      ),
+    );
+  }
+}
+
+class _SearchModeRow extends StatelessWidget {
+  const _SearchModeRow({
+    required this.mode,
+    required this.onChanged,
+  });
+
+  final SearchResultMode mode;
+  final ValueChanged<SearchResultMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SegmentedButton<SearchResultMode>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: SearchResultMode.target,
+              icon: Icon(Icons.movie_filter_rounded, size: 18),
+              label: Text('目标'),
+            ),
+            ButtonSegment(
+              value: SearchResultMode.source,
+              icon: Icon(Icons.hub_rounded, size: 18),
+              label: Text('片源'),
+            ),
+          ],
+          selected: {mode},
+          onSelectionChanged: (selection) => onChanged(selection.first),
+        ),
       ),
     );
   }
