@@ -12,15 +12,21 @@ import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
 import '../../../core/platform/screen_brightness.dart';
 import '../../../core/providers.dart';
+import '../../history/domain/history_repository.dart';
 import '../../player/presentation/widgets/player_controls_overlay.dart';
 import '../../player/presentation/widgets/player_episode_panel.dart';
 import '../../player/presentation/widgets/player_gesture_layer.dart';
 import '../../player/presentation/widgets/player_video_surface.dart';
 
 class DetailPage extends ConsumerStatefulWidget {
-  const DetailPage({required this.initialItem, super.key});
+  const DetailPage({
+    required this.initialItem,
+    this.initialHistory,
+    super.key,
+  });
 
   final VodItem initialItem;
+  final WatchHistoryItem? initialHistory;
 
   @override
   ConsumerState<DetailPage> createState() => _DetailPageState();
@@ -34,11 +40,16 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   late VodItem _detail;
   late VodItem _infoDetail;
   final List<_PlayableLine> _playableLines = [];
+  final List<VodItem> _candidateDetails = [];
+  final Set<String> _candidateKeys = {};
+  final Set<String> _lineKeys = {};
+  final Set<String> _detailFetchKeys = {};
   final Map<int, _LineSpeedTest> _lineSpeedTests = {};
   final Set<int> _lineSpeedTesting = {};
   final FocusNode _keyboardFocusNode =
       FocusNode(debugLabel: 'detail-inline-player');
   bool _loading = true;
+  bool _searchingSources = false;
   bool _favoriteLoading = false;
   bool _sourceToggleLoading = false;
   bool _isFavorited = false;
@@ -55,6 +66,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   late final StreamSubscription<bool> _playingSubscription;
   late final StreamSubscription<bool> _bufferingSubscription;
   late final StreamSubscription<Duration> _bufferSubscription;
+  late final HistoryRepository _historyRepository;
+  late final bool _autoSavePlaybackProgress;
   bool _inlineInitialized = false;
   bool _inlineLoading = false;
   bool _isBuffering = false;
@@ -75,6 +88,13 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   String? _inlineError;
   String? _inlineSignature;
   Timer? _controlsHideTimer;
+  Timer? _progressSaveTimer;
+  int _loadGeneration = 0;
+  int _processedCandidateCount = 0;
+  String? _lastPersistSignature;
+  bool _initialHistoryApplied = false;
+  bool _restoringInitialHistory = false;
+  bool _disposing = false;
 
   _PlayableLine? get _selectedLine =>
       _playableLines.isEmpty ? null : _playableLines[_selectedLineIndex];
@@ -121,6 +141,9 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     _infoDetail = widget.initialItem;
     _inlinePlayer = Player();
     _inlineVideoController = VideoController(_inlinePlayer);
+    _historyRepository = ref.read(historyRepositoryProvider);
+    _autoSavePlaybackProgress =
+        ref.read(appSettingsProvider).autoSavePlaybackProgress;
     _speedTestDio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 4),
@@ -142,12 +165,19 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     _keyboardFocusNode.requestFocus();
     unawaited(_inlinePlayer.setVolume(_volume));
     unawaited(_loadScreenBrightness());
+    _progressSaveTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(_persistProgress()),
+    );
     _load();
   }
 
   @override
   void dispose() {
+    _disposing = true;
     _controlsHideTimer?.cancel();
+    _progressSaveTimer?.cancel();
+    unawaited(_persistProgress());
     _fullscreenBinding.detach();
     _playingSubscription.cancel();
     _bufferingSubscription.cancel();
@@ -166,141 +196,361 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final seed = widget.initialItem;
     setState(() {
-      _loading = true;
+      _detail = seed;
+      _infoDetail = seed;
+      _loading = false;
+      _searchingSources = true;
       _error = null;
       _playableLines.clear();
+      _candidateDetails.clear();
+      _candidateKeys.clear();
+      _lineKeys.clear();
+      _detailFetchKeys.clear();
       _lineSpeedTests.clear();
       _lineSpeedTesting.clear();
       _selectedLineIndex = 0;
+      _selectedEpisodeIndex = 0;
+      _resumeEpisodeIndex = 0;
+      _resumeProgress = 0;
+      _inlineInitialized = false;
+      _inlineLoading = false;
+      _inlineError = null;
+      _inlineSignature = null;
+      _processedCandidateCount = 0;
+      _initialHistoryApplied = false;
+      _restoringInitialHistory = false;
     });
+
     try {
       final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
+      if (!mounted || generation != _loadGeneration) return;
+
       final sourceByKey = {for (final site in sites) site.key: site};
-      final seed = widget.initialItem;
       final query = seed.vodName.trim();
 
-      VodItem? seedDetail;
       if (seed.sourceKey.isNotEmpty && seed.vodId.isNotEmpty) {
-        seedDetail = await ref.read(searchRepositoryProvider).getDetail(
-              sourceKey: seed.sourceKey,
-              vodId: seed.vodId,
-            );
+        if (widget.initialHistory != null) {
+          await _loadSeedDetail(seed, sourceByKey, generation);
+        } else {
+          unawaited(_loadSeedDetail(seed, sourceByKey, generation));
+        }
       }
 
-      final candidates = await _loadCandidates(query, seedDetail);
-      for (final candidate in candidates) {
-        if (candidate.vodPlayUrl.trim().isEmpty) {
-          continue;
+      if (query.isNotEmpty) {
+        final result = await ref.read(searchRepositoryProvider).search(
+          query,
+          onBatch: (batch) {
+            unawaited(_appendSearchItems(batch, sourceByKey, generation));
+          },
+        );
+        if (!mounted || generation != _loadGeneration) return;
+        await _appendSearchItems(result.items, sourceByKey, generation);
+      }
+
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _searchingSources = false;
+        if (_playableLines.isEmpty) {
+          _error = '未找到可播放源';
         }
-        final site = sourceByKey[candidate.sourceKey];
-        final referer = site?.detailUrl ?? site?.baseUrl ?? '';
-        final playResult = await ref
-            .read(playRepositoryProvider)
-            .parsePlayUrl(candidate.vodPlayUrl, referer: referer);
-        for (final source in playResult.sources) {
-          _playableLines.add(
-            _PlayableLine(
-              detail: candidate,
-              source: PlaySource(
-                name: _sourceDisplayName(candidate, source, site),
-                episodes: source.episodes,
-              ),
-              site: site,
-            ),
+      });
+    } catch (e) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _error = e.toString();
+        _searchingSources = false;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadSeedDetail(
+    VodItem seed,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    await _appendCandidate(seed, sourceByKey, generation);
+    if (seed.vodPlayUrl.trim().isNotEmpty) {
+      return;
+    }
+    try {
+      final detail = await ref.read(searchRepositoryProvider).getDetail(
+            sourceKey: seed.sourceKey,
+            vodId: seed.vodId,
           );
-        }
-      }
+      await _mergeCandidateDetail(detail, sourceByKey, generation);
+    } catch (_) {}
+  }
 
-      if (_playableLines.isEmpty) {
-        throw StateError('未找到可播放源');
-      }
+  Future<void> _appendSearchItems(
+    List<VodItem> items,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    if (!mounted || generation != _loadGeneration || items.isEmpty) return;
 
-      final selected = _playableLines.first;
-      final infoDetail = _buildInfoDetail(
-        seed: seed,
-        selected: selected.detail,
-        candidates: candidates,
+    final seed = widget.initialItem;
+    final normalizedQuery = _normalizeTitle(seed.vodName);
+    final exactMatches = items.where((item) {
+      return _normalizeTitle(item.vodName) == normalizedQuery;
+    }).toList();
+    final matches =
+        exactMatches.isEmpty ? items.toList(growable: false) : exactMatches;
+    matches.sort((a, b) {
+      return _candidateRank(b, seed, normalizedQuery)
+          .compareTo(_candidateRank(a, seed, normalizedQuery));
+    });
+
+    for (final item in matches) {
+      if (_processedCandidateCount >= 24) return;
+      final key = '${item.sourceKey}/${item.vodId}';
+      if (item.sourceKey.isEmpty ||
+          item.vodId.isEmpty ||
+          _candidateKeys.contains(key)) {
+        continue;
+      }
+      _processedCandidateCount++;
+      await _appendCandidate(item, sourceByKey, generation);
+      unawaited(_loadCandidateDetail(item, sourceByKey, generation));
+      if (!mounted || generation != _loadGeneration) return;
+    }
+  }
+
+  Future<void> _loadCandidateDetail(
+    VodItem item,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    final key = '${item.sourceKey}/${item.vodId}';
+    if (!_detailFetchKeys.add(key)) return;
+    try {
+      final detail = await ref.read(searchRepositoryProvider).getDetail(
+            sourceKey: item.sourceKey,
+            vodId: item.vodId,
+          );
+      await _mergeCandidateDetail(detail, sourceByKey, generation);
+    } catch (_) {
+    } finally {
+      _detailFetchKeys.remove(key);
+    }
+  }
+
+  Future<void> _mergeCandidateDetail(
+    VodItem incoming,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    if (!mounted || generation != _loadGeneration) return;
+    if (incoming.sourceKey.isEmpty || incoming.vodId.isEmpty) return;
+
+    final candidateKey = '${incoming.sourceKey}/${incoming.vodId}';
+    final index = _candidateDetails.indexWhere(
+      (item) => '${item.sourceKey}/${item.vodId}' == candidateKey,
+    );
+    if (index < 0) {
+      await _appendCandidate(incoming, sourceByKey, generation);
+      return;
+    }
+
+    final merged = _mergeVodItem(_candidateDetails[index], incoming);
+    _candidateDetails[index] = merged;
+    for (var i = 0; i < _playableLines.length; i++) {
+      final line = _playableLines[i];
+      if (line.detail.sourceKey == merged.sourceKey &&
+          line.detail.vodId == merged.vodId) {
+        _playableLines[i] = _PlayableLine(
+          detail: merged,
+          source: line.source,
+          site: line.site,
+        );
+      }
+    }
+
+    if (_selectedLine?.detail.sourceKey == merged.sourceKey &&
+        _selectedLine?.detail.vodId == merged.vodId) {
+      _detail = merged;
+    }
+    _refreshInfoDetail();
+    await _appendPlayableLines(merged, sourceByKey, generation);
+  }
+
+  Future<void> _appendCandidate(
+    VodItem candidate,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    if (!mounted || generation != _loadGeneration) return;
+    if (candidate.sourceKey.isEmpty || candidate.vodId.isEmpty) return;
+
+    final candidateKey = '${candidate.sourceKey}/${candidate.vodId}';
+    if (!_candidateKeys.add(candidateKey)) return;
+    _candidateDetails.add(candidate);
+    _refreshInfoDetail();
+
+    await _appendPlayableLines(candidate, sourceByKey, generation);
+  }
+
+  Future<void> _appendPlayableLines(
+    VodItem candidate,
+    Map<String, SiteWithStatus> sourceByKey,
+    int generation,
+  ) async {
+    if (!mounted || generation != _loadGeneration) return;
+
+    if (candidate.vodPlayUrl.trim().isEmpty) {
+      _refreshInfoDetail();
+      return;
+    }
+
+    final site = sourceByKey[candidate.sourceKey];
+    final referer = site?.detailUrl ?? site?.baseUrl ?? '';
+    final playResult = await ref
+        .read(playRepositoryProvider)
+        .parsePlayUrl(candidate.vodPlayUrl, referer: referer);
+    if (!mounted || generation != _loadGeneration) return;
+
+    final addedIndexes = <int>[];
+    for (final source in playResult.sources) {
+      if (source.episodes.isEmpty) continue;
+      final firstUrl = source.episodes.first.effectiveUrl;
+      final lineKey =
+          '${candidate.sourceKey}/${candidate.vodId}/${source.name}/$firstUrl';
+      if (!_lineKeys.add(lineKey)) {
+        _updateExistingLine(lineKey, candidate, source, site);
+        continue;
+      }
+      final line = _PlayableLine(
+        detail: candidate,
+        source: PlaySource(
+          name: _sourceDisplayName(candidate, source, site),
+          episodes: source.episodes,
+        ),
+        site: site,
       );
-      final (ei, prog) = await _loadResumeForLine(selected);
-      final isFavorited = await ref
-          .read(favoritesRepositoryProvider)
-          .checkFavorite(
-              vodId: selected.detail.vodId,
-              sourceKey: selected.detail.sourceKey);
-      final site = selected.site;
-      final sourceEnabled = site?.enabled ?? true;
+      _playableLines.add(line);
+      addedIndexes.add(_playableLines.length - 1);
+    }
+
+    if (addedIndexes.isEmpty) {
+      _refreshInfoDetail();
+      unawaited(_applyInitialHistoryLineIfReady());
+      return;
+    }
+
+    if (_playableLines.length == addedIndexes.length) {
+      final selectedLineIndex = _findHistoryLineIndex() ?? 0;
+      final selected = _playableLines[selectedLineIndex];
+      final (ei, prog) =
+          await _loadResumeForLine(selected, lineIndex: selectedLineIndex);
+      final favorited =
+          await ref.read(favoritesRepositoryProvider).checkFavorite(
+                vodId: selected.detail.vodId,
+                sourceKey: selected.detail.sourceKey,
+              );
+      if (!mounted || generation != _loadGeneration) return;
 
       setState(() {
+        _selectedLineIndex = selectedLineIndex;
         _detail = selected.detail;
-        _infoDetail = infoDetail;
-        _isFavorited = isFavorited;
-        _sourceEnabled = sourceEnabled;
+        _infoDetail = _buildInfoDetail(
+          seed: widget.initialItem,
+          selected: selected.detail,
+          candidates: _candidateDetails,
+        );
+        _isFavorited = favorited;
+        _sourceEnabled = selected.site?.enabled ?? true;
         _resumeEpisodeIndex = ei;
         _resumeProgress = prog;
         _selectedEpisodeIndex = ei;
         _loading = false;
       });
-      unawaited(_loadInlineEpisode(episodeIndex: ei));
-      unawaited(_startLineSpeedTests());
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+      _initialHistoryApplied = widget.initialHistory == null ||
+          _historyMatchesLine(
+            widget.initialHistory!,
+            selected,
+            selectedLineIndex,
+            strict: true,
+          );
+      if (_shouldWaitForInitialHistoryLine(selectedLineIndex)) {
+        unawaited(_applyInitialHistoryLineIfReady());
+      } else {
+        unawaited(_loadInlineEpisode(
+          episodeIndex: ei,
+          startAtSeconds: prog,
+        ));
+      }
+    } else {
+      _refreshInfoDetail();
+      unawaited(_applyInitialHistoryLineIfReady());
+    }
+
+    for (final index in addedIndexes) {
+      unawaited(_testLineSpeed(index));
     }
   }
 
-  Future<List<VodItem>> _loadCandidates(
-      String query, VodItem? seedDetail) async {
-    final items = <VodItem>[];
-    final seen = <String>{};
+  void _updateExistingLine(
+    String lineKey,
+    VodItem detail,
+    PlaySource source,
+    SiteWithStatus? site,
+  ) {
+    final expectedPrefix = '${detail.sourceKey}/${detail.vodId}/';
+    final index = _playableLines.indexWhere((line) {
+      final firstUrl = line.source.episodes.first.effectiveUrl;
+      return line.detail.sourceKey == detail.sourceKey &&
+          line.detail.vodId == detail.vodId &&
+          lineKey.startsWith(expectedPrefix) &&
+          lineKey.endsWith('/$firstUrl');
+    });
+    if (index < 0) return;
 
-    void add(VodItem item) {
-      if (item.sourceKey.isEmpty || item.vodId.isEmpty) {
-        return;
+    final existing = _playableLines[index];
+    final episodes = source.episodes.length > existing.source.episodes.length
+        ? source.episodes
+        : existing.source.episodes;
+    _playableLines[index] = _PlayableLine(
+      detail: _mergeVodItem(existing.detail, detail),
+      source: PlaySource(
+        name: existing.source.name,
+        episodes: episodes,
+      ),
+      site: existing.site ?? site,
+    );
+  }
+
+  void _refreshInfoDetail() {
+    if (!mounted) return;
+    final selected = _selectedLine;
+    setState(() {
+      if (selected != null) {
+        _infoDetail = _buildInfoDetail(
+          seed: widget.initialItem,
+          selected: selected.detail,
+          candidates: _candidateDetails,
+        );
+      } else if (_candidateDetails.isNotEmpty) {
+        _infoDetail = _buildInfoDetail(
+          seed: widget.initialItem,
+          selected: _candidateDetails.first,
+          candidates: _candidateDetails,
+        );
+      } else {
+        _infoDetail = widget.initialItem;
       }
-      if (seen.add('${item.sourceKey}/${item.vodId}')) {
-        items.add(item);
-      }
-    }
-
-    if (seedDetail != null) {
-      add(seedDetail);
-    }
-
-    if (query.isNotEmpty) {
-      final result = await ref.read(searchRepositoryProvider).search(query);
-      final seed = widget.initialItem;
-      final normalizedQuery = _normalizeTitle(query);
-      final exactMatches = result.items.where((item) {
-        return _normalizeTitle(item.vodName) == normalizedQuery;
-      }).toList();
-      final matches = exactMatches.isEmpty
-          ? result.items.toList(growable: false)
-          : exactMatches;
-      matches.sort((a, b) {
-        return _candidateRank(b, seed, normalizedQuery)
-            .compareTo(_candidateRank(a, seed, normalizedQuery));
-      });
-      for (final item in matches.take(24)) {
-        try {
-          final detail = await ref.read(searchRepositoryProvider).getDetail(
-                sourceKey: item.sourceKey,
-                vodId: item.vodId,
-              );
-          add(detail);
-        } catch (_) {
-          add(item);
-        }
-      }
-    }
-
-    return items;
+    });
   }
 
   int _candidateRank(VodItem item, VodItem seed, String normalizedQuery) {
     var score = 0;
+    if (_hasHlsHint(item.vodPlayUrl)) {
+      score += 40;
+    } else if (_hasPlayableHint(item.vodPlayUrl)) {
+      score += 20;
+    }
     if (_normalizeTitle(item.vodName) == normalizedQuery) {
       score += 30;
     }
@@ -319,6 +569,15 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
     score += _metadataScore(item);
     return score;
+  }
+
+  bool _hasPlayableHint(String value) {
+    return value.trim().isNotEmpty && value.contains(r'$');
+  }
+
+  bool _hasHlsHint(String value) {
+    final lower = value.toLowerCase();
+    return lower.contains('.m3u8') || lower.contains('m3u8');
   }
 
   VodItem _buildInfoDetail({
@@ -365,16 +624,48 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     );
   }
 
-  Future<(int, double)> _loadResumeForLine(_PlayableLine line) async {
-    final history = await ref.read(historyRepositoryProvider).fetchHistory();
-    final match = history
-        .where(
-          (h) =>
-              h.vodId == line.detail.vodId &&
-              h.sourceKey == line.detail.sourceKey,
-        )
-        .toList();
-    final resumeItem = match.isEmpty ? null : match.first;
+  VodItem _mergeVodItem(VodItem current, VodItem incoming) {
+    return VodItem(
+      sourceKey:
+          current.sourceKey.isNotEmpty ? current.sourceKey : incoming.sourceKey,
+      vodId: current.vodId.isNotEmpty ? current.vodId : incoming.vodId,
+      vodName: _firstText([incoming.vodName, current.vodName]) ?? '',
+      vodPlayUrl: _firstText([incoming.vodPlayUrl, current.vodPlayUrl]) ?? '',
+      vodPic: _firstText([incoming.vodPic, current.vodPic]),
+      vodRemarks: _firstText([incoming.vodRemarks, current.vodRemarks]),
+      vodActor: _firstText([incoming.vodActor, current.vodActor]),
+      vodDirector: _firstText([incoming.vodDirector, current.vodDirector]),
+      vodContent: _firstText([incoming.vodContent, current.vodContent]),
+      vodYear: _firstText([incoming.vodYear, current.vodYear]),
+      vodArea: _firstText([incoming.vodArea, current.vodArea]),
+      vodClass: _firstText([incoming.vodClass, current.vodClass]),
+      vodTag: _firstText([incoming.vodTag, current.vodTag]),
+      vodDuration: _firstText([incoming.vodDuration, current.vodDuration]),
+      vodLang: _firstText([incoming.vodLang, current.vodLang]),
+      typeName: _firstText([incoming.typeName, current.typeName]),
+      avgSpeedMs: incoming.avgSpeedMs ?? current.avgSpeedMs,
+    );
+  }
+
+  Future<(int, double)> _loadResumeForLine(
+    _PlayableLine line, {
+    int? lineIndex,
+  }) async {
+    final index = lineIndex ?? _playableLines.indexOf(line);
+    final initialHistory = widget.initialHistory;
+    WatchHistoryItem? resumeItem;
+    if (initialHistory != null &&
+        _historyMatchesLine(initialHistory, line, index, strict: true)) {
+      resumeItem = initialHistory;
+    } else {
+      final history = await _historyRepository.fetchHistory();
+      resumeItem = history.where((item) {
+        return _historyMatchesLine(item, line, index, strict: true);
+      }).firstOrNull;
+      resumeItem ??= history.where((item) {
+        return _historyMatchesLine(item, line, index, strict: false);
+      }).firstOrNull;
+    }
     if (resumeItem == null) {
       return (0, 0.0);
     }
@@ -386,6 +677,104 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       episodeIndex: resumeItem.episodeIndex,
     );
     return (ei, resumeItem.progress);
+  }
+
+  int? _findHistoryLineIndex() {
+    final history = widget.initialHistory;
+    if (history == null) return null;
+
+    for (var i = 0; i < _playableLines.length; i++) {
+      if (_historyMatchesLine(history, _playableLines[i], i, strict: true)) {
+        return i;
+      }
+    }
+    for (var i = 0; i < _playableLines.length; i++) {
+      if (_historyMatchesLine(history, _playableLines[i], i, strict: false)) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _applyInitialHistoryLineIfReady() async {
+    if (_initialHistoryApplied || widget.initialHistory == null) return;
+    final index = _findHistoryLineIndex();
+    if (index == null) return;
+    _initialHistoryApplied = true;
+    await _restoreInitialHistoryAtLine(index);
+  }
+
+  Future<void> _restoreInitialHistoryAtLine(int index) async {
+    if (index < 0 || index >= _playableLines.length) return;
+    final line = _playableLines[index];
+    final (ei, prog) = await _loadResumeForLine(line, lineIndex: index);
+    final isFavorited = await ref
+        .read(favoritesRepositoryProvider)
+        .checkFavorite(
+            vodId: line.detail.vodId, sourceKey: line.detail.sourceKey);
+    if (!mounted) return;
+
+    _restoringInitialHistory = true;
+    try {
+      setState(() {
+        _selectedLineIndex = index;
+        _detail = line.detail;
+        _isFavorited = isFavorited;
+        _sourceEnabled = line.site?.enabled ?? true;
+        _resumeEpisodeIndex = ei;
+        _resumeProgress = prog;
+        _selectedEpisodeIndex = ei;
+        _loading = false;
+      });
+      await _loadInlineEpisode(
+        episodeIndex: ei,
+        startAtSeconds: prog,
+      );
+    } finally {
+      _restoringInitialHistory = false;
+    }
+  }
+
+  bool _shouldWaitForInitialHistoryLine(int selectedLineIndex) {
+    final history = widget.initialHistory;
+    if (history == null || _initialHistoryApplied) return false;
+    if (!_historyHasLineHint(history)) return false;
+    return !_historyMatchesLine(
+      history,
+      _playableLines[selectedLineIndex],
+      selectedLineIndex,
+      strict: true,
+    );
+  }
+
+  bool _historyMatchesLine(
+    WatchHistoryItem item,
+    _PlayableLine line,
+    int lineIndex, {
+    required bool strict,
+  }) {
+    if (item.vodId != line.detail.vodId ||
+        item.sourceKey != line.detail.sourceKey) {
+      return false;
+    }
+    final sourceName = item.sourceName?.trim();
+    if (sourceName != null && sourceName.isNotEmpty) {
+      return _normalizeLineName(sourceName) ==
+          _normalizeLineName(line.source.name);
+    }
+    if (item.sourceIndex != null && item.sourceIndex == lineIndex) {
+      return true;
+    }
+    return !strict && !_historyHasLineHint(item);
+  }
+
+  bool _historyHasLineHint(WatchHistoryItem item) {
+    return item.sourceIndex != null ||
+        (item.sourceName != null && item.sourceName!.trim().isNotEmpty);
+  }
+
+  String _normalizeLineName(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), '').toLowerCase();
   }
 
   String _sourceDisplayName(
@@ -408,8 +797,9 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         index >= _playableLines.length) {
       return;
     }
+    await _persistProgress();
     final line = _playableLines[index];
-    final (ei, prog) = await _loadResumeForLine(line);
+    final (ei, prog) = await _loadResumeForLine(line, lineIndex: index);
     final isFavorited = await ref
         .read(favoritesRepositoryProvider)
         .checkFavorite(
@@ -426,7 +816,10 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       _resumeProgress = prog;
       _selectedEpisodeIndex = ei;
     });
-    await _loadInlineEpisode(episodeIndex: ei);
+    await _loadInlineEpisode(
+      episodeIndex: ei,
+      startAtSeconds: prog,
+    );
   }
 
   Future<void> _selectBestLine() async {
@@ -462,16 +855,6 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       return null;
     }
     return (1 - (siteLatency / 1500).clamp(0.0, 1.0).toDouble()) * 40;
-  }
-
-  Future<void> _startLineSpeedTests() async {
-    final indexes = List<int>.generate(_playableLines.length, (index) => index);
-    final halfBatch = (_playableLines.length / 2).ceil().clamp(1, 4);
-    for (var start = 0; start < indexes.length; start += halfBatch) {
-      if (!mounted) return;
-      final batch = indexes.skip(start).take(halfBatch);
-      await Future.wait(batch.map(_testLineSpeed));
-    }
   }
 
   Future<void> _testLineSpeed(int index) async {
@@ -961,12 +1344,14 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _selectInlineEpisode(int index) async {
+    await _persistProgress();
     await _loadInlineEpisode(episodeIndex: index, play: true);
   }
 
   Future<void> _loadInlineEpisode({
     required int episodeIndex,
     bool play = false,
+    double startAtSeconds = 0,
   }) async {
     final line = _selectedLine;
     if (line == null || line.source.episodes.isEmpty) {
@@ -977,6 +1362,9 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     final signature =
         '${line.detail.sourceKey}/${line.detail.vodId}/$clampedIndex/${episode.effectiveUrl}';
     if (_inlineSignature == signature && _inlineInitialized) {
+      if (startAtSeconds > 0) {
+        await _seekInline(Duration(seconds: startAtSeconds.round()));
+      }
       if (play) {
         await _inlinePlayer.play();
       }
@@ -1012,6 +1400,10 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         _inlineLoading = false;
         _inlineSignature = signature;
       });
+      if (startAtSeconds > 0) {
+        await _seekInline(Duration(seconds: startAtSeconds.round()));
+      }
+      unawaited(_persistProgress(force: true));
       _startControlsHideTimer();
     } catch (error) {
       if (!mounted) {
@@ -1025,20 +1417,142 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
   }
 
+  Future<void> _persistProgress({bool force = false}) async {
+    if (_restoringInitialHistory) {
+      return;
+    }
+    final line = _selectedLine;
+    final episode = _currentEpisode;
+    if (line == null || episode == null || !_inlineInitialized) {
+      return;
+    }
+    if (!_autoSavePlaybackProgress) {
+      return;
+    }
+    final positionSeconds = _inlinePlayer.state.position.inSeconds.toDouble();
+    final durationSeconds = _inlinePlayer.state.duration.inSeconds.toDouble();
+    if (!force && positionSeconds < 1) {
+      return;
+    }
+    if (positionSeconds <= 0) {
+      return;
+    }
+    final signature =
+        '${line.detail.sourceKey}|${line.detail.vodId}|$_selectedEpisodeIndex|'
+        '${positionSeconds.round()}';
+    if (!force && _lastPersistSignature == signature) {
+      return;
+    }
+    await _historyRepository.addHistory(
+      WatchHistoryUpsert(
+        vodId: line.detail.vodId,
+        sourceKey: line.detail.sourceKey,
+        vodName: _infoDetail.vodName,
+        vodPic: _infoDetail.vodPic ?? line.detail.vodPic,
+        sourceName: line.source.name,
+        year: _infoDetail.vodYear ?? line.detail.vodYear,
+        totalEpisodes: line.source.episodes.length,
+        totalTime: durationSeconds > 0 ? durationSeconds : null,
+        searchTitle: widget.initialItem.vodName,
+        progress: positionSeconds,
+        episode: episode.name,
+        sourceIndex: _selectedLineIndex,
+        episodeIndex: _selectedEpisodeIndex,
+      ),
+    );
+    if (!_disposing && mounted) {
+      ref.invalidate(historyItemsProvider);
+    }
+    _lastPersistSignature = signature;
+  }
+
   Future<void> _toggleFavorite() async {
+    if (_favoriteLoading) {
+      return;
+    }
+    final line = _selectedLine;
+    if (line == null) {
+      return;
+    }
     setState(() => _favoriteLoading = true);
     final repo = ref.read(favoritesRepositoryProvider);
+    final favoriteDetail = _favoriteDetailForLine(line);
     try {
       if (_isFavorited) {
         await repo.deleteFavorite(
-            vodId: _detail.vodId, sourceKey: _detail.sourceKey);
+          vodId: line.detail.vodId,
+          sourceKey: line.detail.sourceKey,
+        );
       } else {
-        await repo.addFavorite(_detail);
+        await repo.addFavorite(
+          favoriteDetail,
+          sourceName: line.source.name,
+          year: favoriteDetail.vodYear,
+          totalEpisodes: line.source.episodes.length,
+          searchTitle: widget.initialItem.vodName,
+        );
       }
-      setState(() => _isFavorited = !_isFavorited);
+      final favorited = await repo.checkFavorite(
+        vodId: line.detail.vodId,
+        sourceKey: line.detail.sourceKey,
+      );
+      if (!mounted) return;
+      ref.invalidate(favoriteItemsProvider);
+      setState(() => _isFavorited = favorited);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(favorited ? '已收藏' : '已取消收藏')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('收藏操作失败：$error')),
+      );
     } finally {
-      setState(() => _favoriteLoading = false);
+      if (mounted) {
+        setState(() => _favoriteLoading = false);
+      }
     }
+  }
+
+  VodItem _favoriteDetailForLine(_PlayableLine line) {
+    return VodItem(
+      sourceKey: line.detail.sourceKey,
+      vodId: line.detail.vodId,
+      vodName: _firstText([
+            _infoDetail.vodName,
+            line.detail.vodName,
+            widget.initialItem.vodName,
+          ]) ??
+          '',
+      vodPlayUrl: line.detail.vodPlayUrl,
+      vodPic: _firstText([
+        _infoDetail.vodPic,
+        line.detail.vodPic,
+        widget.initialItem.vodPic,
+      ]),
+      vodRemarks: _firstText([
+        _infoDetail.vodRemarks,
+        line.detail.vodRemarks,
+        widget.initialItem.vodRemarks,
+      ]),
+      vodActor: _firstText([_infoDetail.vodActor, line.detail.vodActor]),
+      vodDirector:
+          _firstText([_infoDetail.vodDirector, line.detail.vodDirector]),
+      vodContent: _firstText([_infoDetail.vodContent, line.detail.vodContent]),
+      vodYear: _firstText([
+        _infoDetail.vodYear,
+        line.detail.vodYear,
+        widget.initialItem.vodYear,
+      ]),
+      vodArea: _firstText([_infoDetail.vodArea, line.detail.vodArea]),
+      vodClass: _firstText([_infoDetail.vodClass, line.detail.vodClass]),
+      vodTag: _firstText([_infoDetail.vodTag, line.detail.vodTag]),
+      vodDuration:
+          _firstText([_infoDetail.vodDuration, line.detail.vodDuration]),
+      vodLang: _firstText([_infoDetail.vodLang, line.detail.vodLang]),
+      typeName: _firstText([_infoDetail.typeName, line.detail.typeName]),
+      avgSpeedMs: line.detail.avgSpeedMs ?? _infoDetail.avgSpeedMs,
+    );
   }
 
   Future<void> _disableCurrentSource() async {
@@ -1146,7 +1660,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       );
     }
 
-    if (_error != null) {
+    if (_error != null && _playableLines.isEmpty && !_searchingSources) {
       return Scaffold(
         appBar: AppBar(),
         body: Center(
@@ -1395,7 +1909,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
               ),
             ),
           _buildCenterPauseIndicator(),
-          if (isMobilePlatform && expanded)
+          if (isMobilePlatform)
             MobileGestureLayer(
               player: _inlinePlayer,
               volume: _volume,
@@ -1428,8 +1942,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
           AnimatedOpacity(
             opacity: _showPlayerControls ? 1 : 0,
             duration: const Duration(milliseconds: 180),
-            child: AbsorbPointer(
-              absorbing: !_showPlayerControls,
+            child: IgnorePointer(
+              ignoring: !_showPlayerControls,
               child: PlayerControlsOverlay(
                 title: _infoDetail.vodName,
                 subtitle: '${source?.name ?? '播放源'} · ${episode?.name ?? ''}',
@@ -1592,8 +2106,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              _Tag(_selectedLine?.source.name ?? '片源 ${_detail.sourceKey}',
-                  color: cs.primaryContainer, textColor: cs.onPrimaryContainer),
+              _Tag(
+                _selectedLine?.source.name ??
+                    (_searchingSources ? '正在匹配片源' : '暂无片源'),
+                color: cs.primaryContainer,
+                textColor: cs.onPrimaryContainer,
+              ),
               if (_infoDetail.vodYear != null &&
                   _infoDetail.vodYear!.isNotEmpty)
                 _Tag(_infoDetail.vodYear!),
@@ -1629,7 +2147,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     return _DetailActionRow(
       hasPlay: _selectedPlayResult != null,
       hasResume: _resumeProgress > 0,
-      sourceEnabled: _sourceEnabled,
+      sourceEnabled: _selectedLine != null && _sourceEnabled,
       sourceToggleLoading: _sourceToggleLoading,
       onPlay: () => _openPlayer(0, _resumeEpisodeIndex, _resumeProgress),
       onPlayFromStart: () => _openPlayer(0, 0, 0),
@@ -1643,7 +2161,26 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     bool padded = true,
   }) {
     if (_playableLines.isEmpty) {
-      return const SizedBox.shrink();
+      if (!_searchingSources) return const SizedBox.shrink();
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: padded ? 16 : 0),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '正在匹配可播放源...',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+            ),
+          ],
+        ),
+      );
     }
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: padded ? 16 : 0),

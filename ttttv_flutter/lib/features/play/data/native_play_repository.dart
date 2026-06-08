@@ -14,7 +14,7 @@ class NativePlayRepository implements PlayRepository {
   @override
   Future<PlayResult> parsePlayUrl(String playUrl, {String referer = ''}) async {
     final normalizedReferer = referer.trim();
-    final sources = <PlaySource>[];
+    final parsedSources = <_ParsedPlaySource>[];
     final sourceParts = playUrl.split(r'$$$');
 
     for (var sourceIndex = 0; sourceIndex < sourceParts.length; sourceIndex++) {
@@ -59,14 +59,26 @@ class NativePlayRepository implements PlayRepository {
         continue;
       }
 
-      sources.add(
-        PlaySource(
-          name: '播放源 ${sourceIndex + 1}',
-          episodes: episodes,
+      parsedSources.add(
+        _ParsedPlaySource(
+          sourceIndex: sourceIndex,
+          hlsCount:
+              episodes.where((episode) => _isLikelyHls(episode.url)).length,
+          source: PlaySource(
+            name: '播放源 ${sourceIndex + 1}',
+            episodes: episodes,
+          ),
         ),
       );
     }
 
+    parsedSources.sort((a, b) {
+      final hlsCompare = b.hlsCount.compareTo(a.hlsCount);
+      if (hlsCompare != 0) return hlsCompare;
+      return a.sourceIndex.compareTo(b.sourceIndex);
+    });
+
+    final sources = parsedSources.map((item) => item.source).toList();
     return PlayResult(sources: sources);
   }
 
@@ -126,4 +138,16 @@ class NativePlayRepository implements PlayRepository {
     final lower = value.toLowerCase();
     return lower.contains('.m3u8') || lower.contains('m3u8');
   }
+}
+
+class _ParsedPlaySource {
+  const _ParsedPlaySource({
+    required this.sourceIndex,
+    required this.hlsCount,
+    required this.source,
+  });
+
+  final int sourceIndex;
+  final int hlsCount;
+  final PlaySource source;
 }

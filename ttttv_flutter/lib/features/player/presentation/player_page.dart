@@ -466,6 +466,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         sourceKey: widget.detail.sourceKey,
         vodName: widget.detail.vodName,
         vodPic: widget.detail.vodPic,
+        sourceName: _currentSource.name,
+        year: widget.detail.vodYear,
+        totalEpisodes: _currentSource.episodes.length,
+        totalTime: _player.state.duration.inSeconds.toDouble(),
+        searchTitle: widget.detail.vodName,
         progress: positionSeconds,
         episode: _currentEpisode.name,
         sourceIndex: _sourceIndex,
@@ -573,8 +578,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Duration _clampPosition(Duration position, Duration duration) {
     if (duration == Duration.zero) return position;
     return Duration(
-      milliseconds:
-          position.inMilliseconds.clamp(0, duration.inMilliseconds),
+      milliseconds: position.inMilliseconds.clamp(0, duration.inMilliseconds),
     );
   }
 

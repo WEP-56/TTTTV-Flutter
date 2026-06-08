@@ -39,6 +39,7 @@ class NativeSearchRepository implements SearchRepository {
 
   static const _perRequestTimeout = Duration(seconds: 8);
   static const _maxPagesPerSource = 5;
+  static const _maxConcurrentSources = 8;
 
   @override
   void cancelSearch() {
@@ -72,7 +73,9 @@ class NativeSearchRepository implements SearchRepository {
     // 如果指定了 sourceKeys，只搜索这些站
     final sources = sourceKeys == null || sourceKeys.isEmpty
         ? allSources
-        : allSources.where((s) => sourceKeys.contains(s.key)).toList(growable: false);
+        : allSources
+            .where((s) => sourceKeys.contains(s.key))
+            .toList(growable: false);
 
     if (sources.isEmpty) {
       return SearchResult(items: const [], filteredCount: 0);
@@ -87,31 +90,39 @@ class NativeSearchRepository implements SearchRepository {
     var successCount = 0;
     Object? lastError;
 
-    // 把每个站当作一个独立的 Future，完成一个就 emit 一次
-    final pending = <Future<void>>[];
-    for (final source in sources) {
-      pending.add(() async {
+    void emitBatch(List<VodItem> items) {
+      if (_activeSession != session || items.isEmpty) return;
+      onBatch?.call(items);
+    }
+
+    var nextSourceIndex = 0;
+    Future<void> runWorker() async {
+      while (_activeSession == session && nextSourceIndex < sources.length) {
+        final source = sources[nextSourceIndex++];
         try {
           final items = await _searchSource(
             source,
             query,
             cancelToken: cancelToken,
+            onBatch: emitBatch,
           );
           if (_activeSession != session) return; // 已被取消
-          if (items.isEmpty) return;
+          if (items.isEmpty) continue;
           successCount++;
           allItems.addAll(items);
-          onBatch?.call(items);
         } catch (error) {
           if (error is DioException && CancelToken.isCancel(error)) {
             return;
           }
           lastError = error;
         }
-      }());
+      }
     }
 
-    await Future.wait(pending);
+    final workerCount = sources.length < _maxConcurrentSources
+        ? sources.length
+        : _maxConcurrentSources;
+    await Future.wait([for (var i = 0; i < workerCount; i++) runWorker()]);
 
     if (_activeSession == session) {
       _activeSession = null;
@@ -133,6 +144,7 @@ class NativeSearchRepository implements SearchRepository {
     LocalVodSource source,
     String query, {
     required CancelToken cancelToken,
+    OnSourceBatch? onBatch,
   }) async {
     // page=1 缓存
     final cached1 = _cache.get(source.key, query, 1);
@@ -170,6 +182,8 @@ class NativeSearchRepository implements SearchRepository {
       return const <VodItem>[];
     }
 
+    onBatch?.call(page1Items);
+
     if (pageCount == null || pageCount <= 1) {
       return page1Items;
     }
@@ -181,8 +195,13 @@ class NativeSearchRepository implements SearchRepository {
 
     // 并发拿剩余页（每页失败独立处理）
     final extraResults = await Future.wait(
-      [for (var page = 2; page <= maxPage; page++) page]
-          .map((page) => _fetchPage(source, query, page, cancelToken)),
+      [for (var page = 2; page <= maxPage; page++) page].map((page) async {
+        final items = await _fetchPage(source, query, page, cancelToken);
+        if (items.isNotEmpty) {
+          onBatch?.call(items);
+        }
+        return items;
+      }),
     );
 
     return [

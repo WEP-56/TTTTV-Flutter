@@ -106,6 +106,7 @@ class VodItem {
       vodName: item.vodName,
       vodPlayUrl: '',
       vodPic: item.vodPic,
+      vodYear: item.year,
     );
   }
 
@@ -120,6 +121,7 @@ class VodItem {
       vodActor: item.vodActor,
       vodDirector: item.vodDirector,
       vodContent: item.vodContent,
+      vodYear: item.year,
     );
   }
 }
@@ -199,6 +201,11 @@ class WatchHistoryItem {
     required this.lastPlayTime,
     required this.progress,
     this.vodPic,
+    this.sourceName,
+    this.year,
+    this.totalEpisodes,
+    this.totalTime,
+    this.searchTitle,
     this.episode,
     this.sourceIndex,
     this.episodeIndex,
@@ -208,6 +215,11 @@ class WatchHistoryItem {
   final String sourceKey;
   final String vodName;
   final String? vodPic;
+  final String? sourceName;
+  final String? year;
+  final int? totalEpisodes;
+  final double? totalTime;
+  final String? searchTitle;
   final int lastPlayTime;
   final double progress;
   final String? episode;
@@ -220,12 +232,23 @@ class WatchHistoryItem {
       vodId: _readString(map['vod_id']) ?? '',
       sourceKey: _readString(map['source_key']) ?? '',
       vodName: _readString(map['vod_name']) ?? '',
-      vodPic: _readString(map['vod_pic']),
-      lastPlayTime: _readInt(map['last_play_time']) ?? 0,
-      progress: _readDouble(map['progress']) ?? 0,
+      vodPic: _readString(map['vod_pic']) ?? _readString(map['cover']),
+      sourceName: _readString(map['source_name']),
+      year: _readString(map['year']),
+      totalEpisodes: _readInt(map['total_episodes']),
+      totalTime: _readDouble(map['total_time']),
+      searchTitle: _readString(map['search_title']),
+      lastPlayTime:
+          _readInt(map['last_play_time']) ?? _readInt(map['save_time']) ?? 0,
+      progress:
+          _readDouble(map['progress']) ?? _readDouble(map['play_time']) ?? 0,
       episode: _readString(map['episode']),
       sourceIndex: _readInt(map['source_index']),
-      episodeIndex: _readInt(map['episode_index']),
+      episodeIndex: _readInt(map['episode_index']) ??
+          (() {
+            final index = _readInt(map['index']);
+            return index == null ? null : (index - 1).clamp(0, 1 << 30);
+          })(),
     );
   }
 }
@@ -237,6 +260,11 @@ class WatchHistoryUpsert {
     required this.vodName,
     required this.progress,
     this.vodPic,
+    this.sourceName,
+    this.year,
+    this.totalEpisodes,
+    this.totalTime,
+    this.searchTitle,
     this.episode,
     this.sourceIndex,
     this.episodeIndex,
@@ -247,6 +275,11 @@ class WatchHistoryUpsert {
   final String vodName;
   final double progress;
   final String? vodPic;
+  final String? sourceName;
+  final String? year;
+  final int? totalEpisodes;
+  final double? totalTime;
+  final String? searchTitle;
   final String? episode;
   final int? sourceIndex;
   final int? episodeIndex;
@@ -257,6 +290,11 @@ class WatchHistoryUpsert {
       'source_key': sourceKey,
       'vod_name': vodName,
       'vod_pic': vodPic,
+      'source_name': sourceName,
+      'year': year,
+      'total_episodes': totalEpisodes,
+      'total_time': totalTime,
+      'search_title': searchTitle,
       'progress': progress,
       'episode': episode,
       'source_index': sourceIndex,
@@ -272,6 +310,10 @@ class FavoriteItem {
     required this.vodName,
     required this.createdTime,
     this.vodPic,
+    this.sourceName,
+    this.year,
+    this.totalEpisodes,
+    this.searchTitle,
     this.vodRemarks,
     this.vodActor,
     this.vodDirector,
@@ -283,6 +325,10 @@ class FavoriteItem {
   final String vodName;
   final int createdTime;
   final String? vodPic;
+  final String? sourceName;
+  final String? year;
+  final int? totalEpisodes;
+  final String? searchTitle;
   final String? vodRemarks;
   final String? vodActor;
   final String? vodDirector;
@@ -294,8 +340,13 @@ class FavoriteItem {
       vodId: _readString(map['vod_id']) ?? '',
       sourceKey: _readString(map['source_key']) ?? '',
       vodName: _readString(map['vod_name']) ?? '',
-      createdTime: _readInt(map['created_time']) ?? 0,
-      vodPic: _readString(map['vod_pic']),
+      createdTime:
+          _readInt(map['created_time']) ?? _readInt(map['save_time']) ?? 0,
+      vodPic: _readString(map['vod_pic']) ?? _readString(map['cover']),
+      sourceName: _readString(map['source_name']),
+      year: _readString(map['year']),
+      totalEpisodes: _readInt(map['total_episodes']),
+      searchTitle: _readString(map['search_title']),
       vodRemarks: _readString(map['vod_remarks']),
       vodActor: _readString(map['vod_actor']),
       vodDirector: _readString(map['vod_director']),

@@ -4,23 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
 import '../../detail/presentation/detail_page.dart';
-import '../presentation/player_page.dart';
 
 Future<void> openPlayerFromHistory(
   BuildContext context,
   WidgetRef ref,
   WatchHistoryItem item,
-) {
-  return _openPlayerFromSavedItem(
-    context: context,
-    ref: ref,
-    sourceKey: item.sourceKey,
-    vodId: item.vodId,
-    fallbackItem: VodItem.fromHistory(item),
-    resumeProgress: item.progress,
-    resumeEpisode: item.episode,
-    resumeSourceIndex: item.sourceIndex,
-    resumeEpisodeIndex: item.episodeIndex,
+) async {
+  final fallback = VodItem.fromHistory(item);
+  final matched = await _matchHistoryBeforeOpen(
+    context,
+    ref,
+    item,
+    fallback: fallback,
+  );
+  if (!context.mounted) return;
+  _openDetailPage(
+    context,
+    matched ?? fallback,
+    initialHistory: item,
   );
 }
 
@@ -29,131 +30,136 @@ Future<void> openPlayerFromFavorite(
   WidgetRef ref,
   FavoriteItem item,
 ) async {
-  final history = await ref.read(historyRepositoryProvider).fetchHistory();
-  final matches = history
-      .where((h) => h.vodId == item.vodId && h.sourceKey == item.sourceKey)
-      .toList(growable: false);
-  final resumeItem = matches.isEmpty ? null : matches.first;
+  final fallback = VodItem.fromFavorite(item);
+  final history = await _findHistoryForFavorite(ref, item);
   if (!context.mounted) return;
 
-  return _openPlayerFromSavedItem(
-    context: context,
-    ref: ref,
-    sourceKey: item.sourceKey,
-    vodId: item.vodId,
-    fallbackItem: VodItem.fromFavorite(item),
-    resumeProgress: resumeItem?.progress ?? 0,
-    resumeEpisode: resumeItem?.episode,
-    resumeSourceIndex: resumeItem?.sourceIndex,
-    resumeEpisodeIndex: resumeItem?.episodeIndex,
+  if (history == null) {
+    _openDetailPage(context, fallback);
+    return;
+  }
+
+  final matched = await _matchHistoryBeforeOpen(
+    context,
+    ref,
+    history,
+    fallback: fallback,
+  );
+  if (!context.mounted) return;
+  _openDetailPage(
+    context,
+    matched ?? fallback,
+    initialHistory: history,
   );
 }
 
-Future<void> _openPlayerFromSavedItem({
-  required BuildContext context,
-  required WidgetRef ref,
-  required String sourceKey,
-  required String vodId,
-  required VodItem fallbackItem,
-  required double resumeProgress,
-  required String? resumeEpisode,
-  required int? resumeSourceIndex,
-  required int? resumeEpisodeIndex,
+Future<VodItem?> _matchHistoryBeforeOpen(
+  BuildContext context,
+  WidgetRef ref,
+  WatchHistoryItem history, {
+  required VodItem fallback,
 }) async {
-  _showLoadingMessage(context);
+  _showMatchingDialog(context);
   try {
     final detail = await ref.read(searchRepositoryProvider).getDetail(
-          sourceKey: sourceKey,
-          vodId: vodId,
+          sourceKey: history.sourceKey,
+          vodId: history.vodId,
         );
-    if (!context.mounted) return;
-
-    if (detail.vodPlayUrl.trim().isEmpty) {
-      _openDetailPage(context, detail);
-      return;
-    }
-
     final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
-    final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
+    final site =
+        sites.where((item) => item.key == detail.sourceKey).firstOrNull;
     final referer = site?.detailUrl ?? site?.baseUrl ?? '';
     final playResult = await ref
         .read(playRepositoryProvider)
         .parsePlayUrl(detail.vodPlayUrl, referer: referer);
-    if (!context.mounted) return;
-
     if (playResult.sources.isEmpty) {
-      _openDetailPage(context, detail);
-      return;
+      throw StateError('历史片源暂无可播放剧集');
     }
-
-    final (sourceIndex, episodeIndex) = _locateEpisode(
-      playResult,
-      episodeName: resumeEpisode,
-      sourceIndex: resumeSourceIndex,
-      episodeIndex: resumeEpisodeIndex,
-    );
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PlayerPage(
-          detail: detail,
-          playResult: playResult,
-          initialSourceIndex: sourceIndex,
-          initialEpisodeIndex: episodeIndex,
-          initialProgress: resumeProgress,
-        ),
-      ),
-    );
+    return detail;
   } catch (error) {
-    if (!context.mounted) return;
-    _showFallbackMessage(context, error);
-    _openDetailPage(context, fallbackItem);
+    if (context.mounted) {
+      _showMatchFallbackMessage(context, error);
+    }
+    return null;
+  } finally {
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 }
 
-void _openDetailPage(BuildContext context, VodItem item) {
+Future<WatchHistoryItem?> _findHistoryForFavorite(
+  WidgetRef ref,
+  FavoriteItem favorite,
+) async {
+  final history = await ref.read(historyRepositoryProvider).fetchHistory();
+  WatchHistoryItem? sameSource;
+  for (final item in history) {
+    if (item.vodId == favorite.vodId && item.sourceKey == favorite.sourceKey) {
+      sameSource = item;
+      break;
+    }
+  }
+  if (sameSource != null) return sameSource;
+
+  final favoriteTitle =
+      _normalizeTitle(favorite.searchTitle ?? favorite.vodName);
+  for (final item in history) {
+    final historyTitle = _normalizeTitle(item.searchTitle ?? item.vodName);
+    if (favoriteTitle.isNotEmpty && favoriteTitle == historyTitle) {
+      return item;
+    }
+  }
+  return null;
+}
+
+void _showMatchingDialog(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) {
+      return const AlertDialog(
+        title: Text('正在匹配观看进度'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LinearProgressIndicator(),
+            SizedBox(height: 16),
+            Text('正在优先加载上次播放使用的片源...'),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+void _showMatchFallbackMessage(BuildContext context, Object error) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  messenger?.showSnackBar(
+    SnackBar(content: Text('未能匹配观看进度，已打开详情页继续搜索：$error')),
+  );
+}
+
+String _normalizeTitle(String value) {
+  return value
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll(RegExp(r'[，,·・\-—_（）()【】\[\]]'), '')
+      .toLowerCase();
+}
+
+void _openDetailPage(
+  BuildContext context,
+  VodItem item, {
+  WatchHistoryItem? initialHistory,
+}) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => DetailPage(initialItem: item),
+      builder: (_) => DetailPage(
+        initialItem: item,
+        initialHistory: initialHistory,
+      ),
     ),
-  );
-}
-
-(int, int) _locateEpisode(
-  PlayResult result, {
-  required String? episodeName,
-  required int? sourceIndex,
-  required int? episodeIndex,
-}) {
-  if (sourceIndex != null &&
-      episodeIndex != null &&
-      sourceIndex >= 0 &&
-      sourceIndex < result.sources.length &&
-      episodeIndex >= 0 &&
-      episodeIndex < result.sources[sourceIndex].episodes.length) {
-    return (sourceIndex, episodeIndex);
-  }
-  if (episodeName == null || episodeName.isEmpty) return (0, 0);
-  for (var si = 0; si < result.sources.length; si++) {
-    final episodes = result.sources[si].episodes;
-    for (var ei = 0; ei < episodes.length; ei++) {
-      if (episodes[ei].name == episodeName) {
-        return (si, ei);
-      }
-    }
-  }
-  return (0, 0);
-}
-
-void _showLoadingMessage(BuildContext context) {
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  messenger?.showSnackBar(
-    const SnackBar(content: Text('正在加载播放信息...')),
-  );
-}
-
-void _showFallbackMessage(BuildContext context, Object error) {
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  messenger?.showSnackBar(
-    SnackBar(content: Text('加载播放信息失败，已打开详情页：$error')),
   );
 }

@@ -44,6 +44,11 @@ class LocalHistoryRepository implements HistoryRepository {
         sourceKey: request.sourceKey,
         vodName: request.vodName,
         vodPic: request.vodPic,
+        sourceName: request.sourceName,
+        year: request.year,
+        totalEpisodes: request.totalEpisodes,
+        totalTime: request.totalTime,
+        searchTitle: request.searchTitle,
         lastPlayTime: DateTime.now().millisecondsSinceEpoch,
         progress: request.progress,
         episode: request.episode,
@@ -98,38 +103,24 @@ class LocalHistoryRepository implements HistoryRepository {
       'source_key': item.sourceKey,
       'vod_name': item.vodName,
       'vod_pic': item.vodPic,
+      'source_name': item.sourceName,
+      'year': item.year,
+      'total_episodes': item.totalEpisodes,
+      'total_time': item.totalTime,
+      'search_title': item.searchTitle,
       'last_play_time': item.lastPlayTime,
       'progress': item.progress,
+      'play_time': item.progress,
+      'save_time': item.lastPlayTime,
       'episode': item.episode,
       'source_index': item.sourceIndex,
       'episode_index': item.episodeIndex,
+      'index': item.episodeIndex == null ? null : item.episodeIndex! + 1,
     };
   }
 
   bool _isSameEntry(WatchHistoryItem item, WatchHistoryUpsert request) {
-    if (item.vodId != request.vodId || item.sourceKey != request.sourceKey) {
-      return false;
-    }
-
-    if (request.sourceIndex != null && request.episodeIndex != null) {
-      if (item.sourceIndex == request.sourceIndex &&
-          item.episodeIndex == request.episodeIndex) {
-        return true;
-      }
-      if (item.episode != null &&
-          request.episode != null &&
-          item.episode == request.episode) {
-        return true;
-      }
-      return false;
-    }
-
-    if (request.episode != null && request.episode!.isNotEmpty) {
-      return item.episode == request.episode;
-    }
-
-    return item.sourceIndex == request.sourceIndex &&
-        item.episodeIndex == request.episodeIndex;
+    return item.vodId == request.vodId && item.sourceKey == request.sourceKey;
   }
 
   bool _matchesEpisode(

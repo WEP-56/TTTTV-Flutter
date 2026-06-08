@@ -32,7 +32,13 @@ class LocalFavoritesRepository implements FavoritesRepository {
   }
 
   @override
-  Future<void> addFavorite(VodItem item) async {
+  Future<void> addFavorite(
+    VodItem item, {
+    String? sourceName,
+    String? year,
+    int? totalEpisodes,
+    String? searchTitle,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final favorites = await fetchFavorites();
     final next = favorites
@@ -50,6 +56,10 @@ class LocalFavoritesRepository implements FavoritesRepository {
         vodName: item.vodName,
         createdTime: DateTime.now().millisecondsSinceEpoch,
         vodPic: item.vodPic,
+        sourceName: sourceName,
+        year: year ?? item.vodYear,
+        totalEpisodes: totalEpisodes,
+        searchTitle: searchTitle,
         vodRemarks: item.vodRemarks,
         vodActor: item.vodActor,
         vodDirector: item.vodDirector,
@@ -105,7 +115,13 @@ class LocalFavoritesRepository implements FavoritesRepository {
       'source_key': item.sourceKey,
       'vod_name': item.vodName,
       'created_time': item.createdTime,
+      'save_time': item.createdTime,
       'vod_pic': item.vodPic,
+      'cover': item.vodPic,
+      'source_name': item.sourceName,
+      'year': item.year,
+      'total_episodes': item.totalEpisodes,
+      'search_title': item.searchTitle,
       'vod_remarks': item.vodRemarks,
       'vod_actor': item.vodActor,
       'vod_director': item.vodDirector,

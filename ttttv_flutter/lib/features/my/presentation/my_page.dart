@@ -376,6 +376,8 @@ class _FavoritesManagerTabState extends ConsumerState<_FavoritesManagerTab> {
   @override
   Widget build(BuildContext context) {
     final asyncItems = ref.watch(favoriteItemsProvider);
+    final historyItems =
+        ref.watch(historyItemsProvider).valueOrNull ?? const [];
 
     return asyncItems.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -449,6 +451,11 @@ class _FavoritesManagerTabState extends ConsumerState<_FavoritesManagerTab> {
 
                       return _FavoriteCard(
                         item: item,
+                        historyItem: historyItems
+                            .where((history) =>
+                                history.vodId == item.vodId &&
+                                history.sourceKey == item.sourceKey)
+                            .firstOrNull,
                         selectionMode: _selectionMode,
                         selected: selected,
                         busy: _busy,
@@ -776,7 +783,7 @@ class _HistoryCard extends StatelessWidget {
       title: item.vodName,
       subtitle: [
         if (item.episode != null && item.episode!.isNotEmpty) item.episode!,
-        '片源：${item.sourceKey}',
+        '片源：${item.sourceName ?? item.sourceKey}',
       ].join(' · '),
       meta: Wrap(
         spacing: 8,
@@ -818,6 +825,7 @@ class _HistoryCard extends StatelessWidget {
 class _FavoriteCard extends StatelessWidget {
   const _FavoriteCard({
     required this.item,
+    required this.historyItem,
     required this.selectionMode,
     required this.selected,
     required this.busy,
@@ -827,6 +835,7 @@ class _FavoriteCard extends StatelessWidget {
   });
 
   final FavoriteItem item;
+  final WatchHistoryItem? historyItem;
   final bool selectionMode;
   final bool selected;
   final bool busy;
@@ -841,7 +850,7 @@ class _FavoriteCard extends StatelessWidget {
         item.vodRemarks!,
       if (item.vodDirector != null && item.vodDirector!.isNotEmpty)
         '导演：${item.vodDirector!}',
-      '片源：${item.sourceKey}',
+      '片源：${item.sourceName ?? item.sourceKey}',
     ].join(' · ');
 
     return _ManagedItemCardShell(
@@ -860,6 +869,12 @@ class _FavoriteCard extends StatelessWidget {
             _InfoBadge(
               icon: Icons.person_outline_rounded,
               label: item.vodActor!,
+            ),
+          if (historyItem != null)
+            _InfoBadge(
+              icon: Icons.play_circle_outline_rounded,
+              label:
+                  '看到第 ${(historyItem!.episodeIndex ?? 0) + 1} 集 · ${_formatSecondsLabel(historyItem!.progress)}',
             ),
           _InfoBadge(
             icon: Icons.bookmark_outline_rounded,
