@@ -1,12 +1,18 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
-import '../../player/presentation/player_page.dart';
+import '../../player/presentation/widgets/player_controls_overlay.dart';
+import '../../player/presentation/widgets/player_episode_panel.dart';
+import '../../player/presentation/widgets/player_video_surface.dart';
 
 class DetailPage extends ConsumerStatefulWidget {
   const DetailPage({required this.initialItem, super.key});
@@ -19,80 +25,576 @@ class DetailPage extends ConsumerStatefulWidget {
 
 class _DetailPageState extends ConsumerState<DetailPage> {
   late VodItem _detail;
-  PlayResult? _playResult;
+  late VodItem _infoDetail;
+  final List<_PlayableLine> _playableLines = [];
   bool _loading = true;
   bool _favoriteLoading = false;
   bool _sourceToggleLoading = false;
   bool _isFavorited = false;
   bool _sourceEnabled = true;
   String? _error;
-  int _resumeSourceIndex = 0;
   int _resumeEpisodeIndex = 0;
   double _resumeProgress = 0;
+  int _selectedLineIndex = 0;
+  int _selectedEpisodeIndex = 0;
+  late final Player _inlinePlayer;
+  late final VideoController _inlineVideoController;
+  late final StreamSubscription<bool> _playingSubscription;
+  late final StreamSubscription<bool> _bufferingSubscription;
+  late final StreamSubscription<Duration> _bufferSubscription;
+  bool _inlineInitialized = false;
+  bool _inlineLoading = false;
+  bool _isBuffering = false;
+  bool _isSeeking = false;
+  bool _showPlayerControls = true;
+  bool _playerExpanded = false;
+  bool _episodeDrawerOpen = false;
+  bool _mobileImmersiveApplied = false;
+  double _volume = 100;
+  double _playbackSpeed = 1;
+  int _fitMode = 0;
+  Duration _bufferPosition = Duration.zero;
+  String? _inlineError;
+  String? _inlineSignature;
+  Timer? _controlsHideTimer;
+
+  _PlayableLine? get _selectedLine =>
+      _playableLines.isEmpty ? null : _playableLines[_selectedLineIndex];
+
+  PlayResult? get _selectedPlayResult {
+    final line = _selectedLine;
+    if (line == null) return null;
+    return PlayResult(sources: [line.source]);
+  }
+
+  PlaySource? get _currentSource => _selectedLine?.source;
+
+  PlayEpisode? get _currentEpisode {
+    final source = _currentSource;
+    if (source == null || source.episodes.isEmpty) return null;
+    final index = _selectedEpisodeIndex.clamp(0, source.episodes.length - 1);
+    return source.episodes[index];
+  }
+
+  bool get _canPlayPrevious => _selectedEpisodeIndex > 0;
+
+  bool get _canPlayNext {
+    final source = _currentSource;
+    if (source == null) return false;
+    return _selectedEpisodeIndex < source.episodes.length - 1;
+  }
+
+  BoxFit get _videoFit => switch (_fitMode) {
+        1 => BoxFit.cover,
+        2 => BoxFit.fill,
+        _ => BoxFit.contain,
+      };
+
+  String get _fitLabel => switch (_fitMode) {
+        1 => '铺满',
+        2 => '拉伸',
+        _ => '原比例',
+      };
 
   @override
   void initState() {
     super.initState();
     _detail = widget.initialItem;
+    _infoDetail = widget.initialItem;
+    _inlinePlayer = Player();
+    _inlineVideoController = VideoController(_inlinePlayer);
+    _playingSubscription =
+        _inlinePlayer.stream.playing.listen(_handleInlinePlayingChanged);
+    _bufferingSubscription =
+        _inlinePlayer.stream.buffering.listen(_handleInlineBufferingChanged);
+    _bufferSubscription =
+        _inlinePlayer.stream.buffer.listen(_handleInlineBufferChanged);
+    unawaited(_inlinePlayer.setVolume(_volume));
     _load();
+  }
+
+  @override
+  void dispose() {
+    _controlsHideTimer?.cancel();
+    _playingSubscription.cancel();
+    _bufferingSubscription.cancel();
+    _bufferSubscription.cancel();
+    if (_mobileImmersiveApplied) {
+      unawaited(_restoreMobileInlineMode());
+    }
+    unawaited(_inlinePlayer.dispose());
+    super.dispose();
   }
 
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
+      _playableLines.clear();
+      _selectedLineIndex = 0;
     });
     try {
-      final detail = await ref.read(searchRepositoryProvider).getDetail(
-            sourceKey: widget.initialItem.sourceKey,
-            vodId: widget.initialItem.vodId,
-          );
-      PlayResult? playResult;
       final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
-      final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
-      _sourceEnabled = site?.enabled ?? true;
-      if (detail.vodPlayUrl.trim().isNotEmpty) {
-        // 取站点 detail 域名作为 Referer，绕过 M3U8 防盗链
-        final sites = await ref.read(sourcesRepositoryProvider).fetchSites();
-        final site = sites.where((s) => s.key == detail.sourceKey).firstOrNull;
-        final referer = site?.detailUrl ?? site?.baseUrl ?? '';
-        playResult = await ref
-            .read(playRepositoryProvider)
-            .parsePlayUrl(detail.vodPlayUrl, referer: referer);
+      final sourceByKey = {for (final site in sites) site.key: site};
+      final seed = widget.initialItem;
+      final query = seed.vodName.trim();
+
+      VodItem? seedDetail;
+      if (seed.sourceKey.isNotEmpty && seed.vodId.isNotEmpty) {
+        seedDetail = await ref.read(searchRepositoryProvider).getDetail(
+              sourceKey: seed.sourceKey,
+              vodId: seed.vodId,
+            );
       }
+
+      final candidates = await _loadCandidates(query, seedDetail);
+      for (final candidate in candidates) {
+        if (candidate.vodPlayUrl.trim().isEmpty) {
+          continue;
+        }
+        final site = sourceByKey[candidate.sourceKey];
+        final referer = site?.detailUrl ?? site?.baseUrl ?? '';
+        final playResult = await ref
+            .read(playRepositoryProvider)
+            .parsePlayUrl(candidate.vodPlayUrl, referer: referer);
+        for (final source in playResult.sources) {
+          _playableLines.add(
+            _PlayableLine(
+              detail: candidate,
+              source: PlaySource(
+                name: _sourceDisplayName(candidate, source, site),
+                episodes: source.episodes,
+              ),
+              site: site,
+            ),
+          );
+        }
+      }
+
+      if (_playableLines.isEmpty) {
+        throw StateError('未找到可播放源');
+      }
+
+      final selected = _playableLines.first;
+      final infoDetail = _buildInfoDetail(
+        seed: seed,
+        selected: selected.detail,
+        candidates: candidates,
+      );
+      final (ei, prog) = await _loadResumeForLine(selected);
       final isFavorited = await ref
           .read(favoritesRepositoryProvider)
-          .checkFavorite(vodId: detail.vodId, sourceKey: detail.sourceKey);
-      final history = await ref.read(historyRepositoryProvider).fetchHistory();
-      final match = history
-          .where(
-              (h) => h.vodId == detail.vodId && h.sourceKey == detail.sourceKey)
-          .toList();
-      final resumeItem = match.isEmpty ? null : match.first;
-      var si = 0, ei = 0;
-      var prog = 0.0;
-      if (resumeItem != null && playResult != null) {
-        prog = resumeItem.progress;
-        (si, ei) = _locateEpisode(
-          playResult,
-          resumeItem.episode,
-          sourceIndex: resumeItem.sourceIndex,
-          episodeIndex: resumeItem.episodeIndex,
-        );
-      }
+          .checkFavorite(
+              vodId: selected.detail.vodId,
+              sourceKey: selected.detail.sourceKey);
+      final site = selected.site;
+      final sourceEnabled = site?.enabled ?? true;
+
       setState(() {
-        _detail = detail;
-        _playResult = playResult;
+        _detail = selected.detail;
+        _infoDetail = infoDetail;
         _isFavorited = isFavorited;
-        _resumeSourceIndex = si;
+        _sourceEnabled = sourceEnabled;
         _resumeEpisodeIndex = ei;
         _resumeProgress = prog;
+        _selectedEpisodeIndex = ei;
         _loading = false;
       });
+      unawaited(_loadInlineEpisode(episodeIndex: ei));
     } catch (e) {
       setState(() {
         _error = e.toString();
         _loading = false;
+      });
+    }
+  }
+
+  Future<List<VodItem>> _loadCandidates(
+      String query, VodItem? seedDetail) async {
+    final items = <VodItem>[];
+    final seen = <String>{};
+
+    void add(VodItem item) {
+      if (item.sourceKey.isEmpty || item.vodId.isEmpty) {
+        return;
+      }
+      if (seen.add('${item.sourceKey}/${item.vodId}')) {
+        items.add(item);
+      }
+    }
+
+    if (seedDetail != null) {
+      add(seedDetail);
+    }
+
+    if (query.isNotEmpty) {
+      final result = await ref.read(searchRepositoryProvider).search(query);
+      final normalizedQuery = _normalizeTitle(query);
+      final exactMatches = result.items.where((item) {
+        return _normalizeTitle(item.vodName) == normalizedQuery;
+      }).toList();
+      final matches = exactMatches.isEmpty ? result.items : exactMatches;
+      for (final item in matches.take(24)) {
+        try {
+          final detail = await ref.read(searchRepositoryProvider).getDetail(
+                sourceKey: item.sourceKey,
+                vodId: item.vodId,
+              );
+          add(detail);
+        } catch (_) {
+          add(item);
+        }
+      }
+    }
+
+    return items;
+  }
+
+  VodItem _buildInfoDetail({
+    required VodItem seed,
+    required VodItem selected,
+    required List<VodItem> candidates,
+  }) {
+    final pool = [seed, ...candidates, selected];
+    final best =
+        pool.reduce((a, b) => _metadataScore(a) >= _metadataScore(b) ? a : b);
+    final content = pool
+        .where((item) => _hasText(item.vodContent))
+        .fold<VodItem?>(null, (current, item) {
+      if (current == null) return item;
+      return item.vodContent!.length > current.vodContent!.length
+          ? item
+          : current;
+    });
+
+    return VodItem(
+      sourceKey: selected.sourceKey,
+      vodId: selected.vodId,
+      vodName: _firstText([seed.vodName, best.vodName, selected.vodName]) ?? '',
+      vodPlayUrl: selected.vodPlayUrl,
+      vodPic: _firstText([seed.vodPic, best.vodPic, selected.vodPic]),
+      vodRemarks:
+          _firstText([seed.vodRemarks, best.vodRemarks, selected.vodRemarks]),
+      vodActor:
+          _firstText([best.vodActor, content?.vodActor, selected.vodActor]),
+      vodDirector: _firstText([
+        best.vodDirector,
+        content?.vodDirector,
+        selected.vodDirector,
+      ]),
+      vodContent: _firstText(
+          [content?.vodContent, best.vodContent, selected.vodContent]),
+      vodYear: _firstText([seed.vodYear, best.vodYear, selected.vodYear]),
+      vodArea: _firstText([best.vodArea, selected.vodArea, seed.vodArea]),
+      vodClass: _firstText([best.vodClass, selected.vodClass]),
+      vodTag: _firstText([best.vodTag, selected.vodTag]),
+      vodDuration: _firstText([best.vodDuration, selected.vodDuration]),
+      vodLang: _firstText([best.vodLang, selected.vodLang]),
+      typeName: _firstText([best.typeName, selected.typeName]),
+    );
+  }
+
+  Future<(int, double)> _loadResumeForLine(_PlayableLine line) async {
+    final history = await ref.read(historyRepositoryProvider).fetchHistory();
+    final match = history
+        .where(
+          (h) =>
+              h.vodId == line.detail.vodId &&
+              h.sourceKey == line.detail.sourceKey,
+        )
+        .toList();
+    final resumeItem = match.isEmpty ? null : match.first;
+    if (resumeItem == null) {
+      return (0, 0.0);
+    }
+    final result = PlayResult(sources: [line.source]);
+    final (_, ei) = _locateEpisode(
+      result,
+      resumeItem.episode,
+      sourceIndex: 0,
+      episodeIndex: resumeItem.episodeIndex,
+    );
+    return (ei, resumeItem.progress);
+  }
+
+  String _sourceDisplayName(
+    VodItem detail,
+    PlaySource source,
+    SiteWithStatus? site,
+  ) {
+    final siteName = site?.name.trim();
+    final base =
+        siteName == null || siteName.isEmpty ? detail.sourceKey : siteName;
+    if (source.name.isEmpty || source.name == '播放源 1') {
+      return base;
+    }
+    return '$base · ${source.name}';
+  }
+
+  Future<void> _selectLine(int index) async {
+    if (index == _selectedLineIndex ||
+        index < 0 ||
+        index >= _playableLines.length) {
+      return;
+    }
+    final line = _playableLines[index];
+    final (ei, prog) = await _loadResumeForLine(line);
+    final isFavorited = await ref
+        .read(favoritesRepositoryProvider)
+        .checkFavorite(
+            vodId: line.detail.vodId, sourceKey: line.detail.sourceKey);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedLineIndex = index;
+      _detail = line.detail;
+      _isFavorited = isFavorited;
+      _sourceEnabled = line.site?.enabled ?? true;
+      _resumeEpisodeIndex = ei;
+      _resumeProgress = prog;
+      _selectedEpisodeIndex = ei;
+    });
+    await _loadInlineEpisode(episodeIndex: ei);
+  }
+
+  Future<void> _selectBestLine() async {
+    if (_playableLines.length <= 1) {
+      return;
+    }
+    var bestIndex = _selectedLineIndex;
+    int? bestTime;
+    for (var i = 0; i < _playableLines.length; i++) {
+      final time = _playableLines[i].site?.responseTimeMs;
+      if (time == null || time <= 0) {
+        continue;
+      }
+      if (bestTime == null || time < bestTime) {
+        bestIndex = i;
+        bestTime = time;
+      }
+    }
+    await _selectLine(bestIndex);
+  }
+
+  void _handleInlinePlayingChanged(bool playing) {
+    if (!mounted) return;
+    if (playing) {
+      _startControlsHideTimer();
+      return;
+    }
+    _controlsHideTimer?.cancel();
+    setState(() => _showPlayerControls = true);
+  }
+
+  void _handleInlineBufferingChanged(bool buffering) {
+    if (!mounted) return;
+    setState(() => _isBuffering = buffering);
+  }
+
+  void _handleInlineBufferChanged(Duration buffer) {
+    if (!mounted) return;
+    setState(() => _bufferPosition = buffer);
+  }
+
+  void _startControlsHideTimer() {
+    _controlsHideTimer?.cancel();
+    if (!_inlinePlayer.state.playing || _episodeDrawerOpen) return;
+    _controlsHideTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || _episodeDrawerOpen) return;
+      setState(() => _showPlayerControls = false);
+    });
+  }
+
+  void _showControlsNow() {
+    if (!mounted) return;
+    setState(() => _showPlayerControls = true);
+    _startControlsHideTimer();
+  }
+
+  Future<void> _toggleInlinePlayPause() async {
+    if (_inlinePlayer.state.playing) {
+      await _inlinePlayer.pause();
+      return;
+    }
+    await _inlinePlayer.play();
+    _showControlsNow();
+  }
+
+  Future<void> _seekInline(Duration position) async {
+    final duration = _inlinePlayer.state.duration;
+    final target = duration == Duration.zero
+        ? position
+        : Duration(
+            milliseconds:
+                position.inMilliseconds.clamp(0, duration.inMilliseconds),
+          );
+    setState(() => _isSeeking = true);
+    try {
+      await _inlinePlayer.seek(target);
+    } finally {
+      if (mounted) {
+        setState(() => _isSeeking = false);
+      }
+    }
+    _showControlsNow();
+  }
+
+  Future<void> _setInlineVolume(double value) async {
+    final next = value.clamp(0, 100).toDouble();
+    setState(() => _volume = next);
+    await _inlinePlayer.setVolume(next);
+  }
+
+  Future<void> _setInlineSpeed(double value) async {
+    setState(() => _playbackSpeed = value);
+    await _inlinePlayer.setRate(value);
+    _showControlsNow();
+  }
+
+  void _setInlineFit(int value) {
+    setState(() => _fitMode = value);
+    _showControlsNow();
+  }
+
+  Future<void> _selectPreviousEpisode() async {
+    if (!_canPlayPrevious) return;
+    await _selectInlineEpisode(_selectedEpisodeIndex - 1);
+  }
+
+  Future<void> _selectNextEpisode() async {
+    if (!_canPlayNext) return;
+    await _selectInlineEpisode(_selectedEpisodeIndex + 1);
+  }
+
+  void _toggleEpisodeDrawer() {
+    setState(() {
+      _episodeDrawerOpen = !_episodeDrawerOpen;
+      _showPlayerControls = true;
+    });
+    if (_episodeDrawerOpen) {
+      _controlsHideTimer?.cancel();
+    } else {
+      _startControlsHideTimer();
+    }
+  }
+
+  void _closeEpisodeDrawer() {
+    if (!_episodeDrawerOpen) return;
+    setState(() => _episodeDrawerOpen = false);
+    _startControlsHideTimer();
+  }
+
+  Future<void> _toggleExpandedPlayer() async {
+    if (_playerExpanded) {
+      await _exitExpandedPlayer();
+    } else {
+      await _enterExpandedPlayer();
+    }
+  }
+
+  Future<void> _enterExpandedPlayer() async {
+    if (_playerExpanded) return;
+    setState(() {
+      _playerExpanded = true;
+      _showPlayerControls = true;
+    });
+    if (isMobilePlatform) {
+      _mobileImmersiveApplied = true;
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
+    await _inlinePlayer.play();
+    _startControlsHideTimer();
+  }
+
+  Future<void> _exitExpandedPlayer() async {
+    if (!_playerExpanded) return;
+    setState(() {
+      _playerExpanded = false;
+      _episodeDrawerOpen = false;
+      _showPlayerControls = true;
+    });
+    if (_mobileImmersiveApplied) {
+      await _restoreMobileInlineMode();
+    }
+  }
+
+  Future<void> _restoreMobileInlineMode() async {
+    _mobileImmersiveApplied = false;
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  Future<void> _selectInlineEpisode(int index) async {
+    await _loadInlineEpisode(episodeIndex: index, play: true);
+  }
+
+  Future<void> _loadInlineEpisode({
+    required int episodeIndex,
+    bool play = false,
+  }) async {
+    final line = _selectedLine;
+    if (line == null || line.source.episodes.isEmpty) {
+      return;
+    }
+    final clampedIndex = episodeIndex.clamp(0, line.source.episodes.length - 1);
+    final episode = line.source.episodes[clampedIndex];
+    final signature =
+        '${line.detail.sourceKey}/${line.detail.vodId}/$clampedIndex/${episode.effectiveUrl}';
+    if (_inlineSignature == signature && _inlineInitialized) {
+      if (play) {
+        await _inlinePlayer.play();
+      }
+      return;
+    }
+
+    setState(() {
+      _selectedEpisodeIndex = clampedIndex;
+      _inlineLoading = true;
+      _inlineInitialized = false;
+      _isBuffering = false;
+      _isSeeking = false;
+      _bufferPosition = Duration.zero;
+      _inlineError = null;
+      _showPlayerControls = true;
+    });
+
+    try {
+      await _inlinePlayer.open(
+        Media(
+          episode.effectiveUrl,
+          httpHeaders: episode.httpHeaders,
+        ),
+        play: play,
+      );
+      await _inlinePlayer.setRate(_playbackSpeed);
+      await _inlinePlayer.setVolume(_volume);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _inlineInitialized = true;
+        _inlineLoading = false;
+        _inlineSignature = signature;
+      });
+      _startControlsHideTimer();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _inlineInitialized = false;
+        _inlineLoading = false;
+        _inlineError = error.toString();
       });
     }
   }
@@ -172,18 +674,15 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
   }
 
-  void _openPlayer(int si, int ei, double prog) {
-    final pr = _playResult;
-    if (pr == null) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PlayerPage(
-        detail: _detail,
-        playResult: pr,
-        initialSourceIndex: si,
-        initialEpisodeIndex: ei,
-        initialProgress: prog,
-      ),
-    ));
+  Future<void> _openPlayer(int si, int ei, double prog) async {
+    final source = _currentSource;
+    if (source == null || source.episodes.isEmpty) return;
+    final targetEpisode = ei.clamp(0, source.episodes.length - 1);
+    await _loadInlineEpisode(episodeIndex: targetEpisode, play: true);
+    if (prog > 0) {
+      await _seekInline(Duration(seconds: prog.round()));
+    }
+    await _enterExpandedPlayer();
   }
 
   (int, int) _locateEpisode(
@@ -241,104 +740,673 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       );
     }
 
+    final content = isDesktopPlatform
+        ? _buildDesktopLayout(context, cs)
+        : _buildMobileLayout(context, cs);
+
+    if (_playerExpanded) {
+      return PopScope<void>(
+        canPop: false,
+        onPopInvokedWithResult: (_, __) => unawaited(_exitExpandedPlayer()),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: _buildExpandedPlayer(),
+        ),
+      );
+    }
+
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          _DetailSliverAppBar(
-            detail: _detail,
-            isFavorited: _isFavorited,
-            favoriteLoading: _favoriteLoading,
-            onFavorite: _toggleFavorite,
+      appBar: AppBar(
+        title: isDesktopPlatform
+            ? PlatformDragToMoveArea(
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(_infoDetail.vodName),
+                  ),
+                ),
+              )
+            : Text(
+                _infoDetail.vodName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+        scrolledUnderElevation: 0,
+        actions: [
+          _favoriteLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : IconButton(
+                  onPressed: _toggleFavorite,
+                  icon: Icon(
+                    _isFavorited
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: _isFavorited ? cs.error : null,
+                  ),
+                ),
+        ],
+      ),
+      body: content,
+    );
+  }
+
+  Widget _buildMobileLayout(BuildContext context, ColorScheme cs) {
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: _buildPlayerFrame(context, fill: false),
           ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: _DetailActionRow(
-                hasPlay: _playResult != null,
-                hasResume: _resumeProgress > 0,
-                sourceEnabled: _sourceEnabled,
-                sourceToggleLoading: _sourceToggleLoading,
-                onPlay: () => _openPlayer(
-                    _resumeSourceIndex, _resumeEpisodeIndex, _resumeProgress),
-                onPlayFromStart: () => _openPlayer(0, 0, 0),
-                onDisableSource: _disableCurrentSource,
+        ),
+        SliverToBoxAdapter(child: _buildInfoBlock(context, cs, compact: false)),
+        SliverToBoxAdapter(child: _buildActionBlock(context)),
+        SliverToBoxAdapter(child: _buildSourceSwitcher(context, cs)),
+        _buildEpisodeGrid(context, cs),
+        const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
+      ],
+    );
+  }
+
+  Widget _buildDesktopLayout(BuildContext context, ColorScheme cs) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 10, 16),
+            child: _buildPlayerFrame(context, fill: true),
+          ),
+        ),
+        SizedBox(
+          width: 380,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 12, 16, 16),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.34),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: cs.outlineVariant.withValues(alpha: 0.45),
+                ),
+              ),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+                children: [
+                  _RightPanelCover(detail: _infoDetail),
+                  const SizedBox(height: 14),
+                  _buildInfoBlock(context, cs, compact: true),
+                  const SizedBox(height: 14),
+                  _buildActionBlock(context),
+                  const SizedBox(height: 14),
+                  _buildSourceSwitcher(context, cs, padded: false),
+                  const SizedBox(height: 10),
+                  _EpisodeGridBox(
+                    source: _selectedLine?.source,
+                    selectedEpisodeIndex: _selectedEpisodeIndex,
+                    resumeEpisodeIndex: _resumeEpisodeIndex,
+                    resumeProgress: _resumeProgress,
+                    onEpisode: (index, _) => _selectInlineEpisode(index),
+                  ),
+                  if (_infoDetail.vodContent != null &&
+                      _infoDetail.vodContent!.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      '简介',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    _ExpandableText(text: _infoDetail.vodContent!),
+                  ],
+                  if (_infoDetail.vodActor != null ||
+                      _infoDetail.vodDirector != null) ...[
+                    const SizedBox(height: 12),
+                    _MetaChips(detail: _infoDetail),
+                  ],
+                ],
               ),
             ),
           ),
-          if (_detail.vodContent != null && _detail.vodContent!.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: _ExpandableText(text: _detail.vodContent!),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlayerFrame(BuildContext context, {required bool fill}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: double.infinity,
+        height: fill
+            ? double.infinity
+            : (MediaQuery.of(context).size.width - 32) * 9 / 16,
+        child: _buildPlayerStage(compact: !fill, expanded: false),
+      ),
+    );
+  }
+
+  Widget _buildExpandedPlayer() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildPlayerStage(compact: false, expanded: true),
+        _buildEpisodeDrawerLayer(),
+      ],
+    );
+  }
+
+  Widget _buildPlayerStage({
+    required bool compact,
+    required bool expanded,
+  }) {
+    final episode = _currentEpisode;
+    final source = _currentSource;
+    final showLoading = _inlineError == null &&
+        (!_inlineInitialized || _inlineLoading || _isSeeking || _isBuffering);
+    final loadingLabel = _isSeeking
+        ? '正在定位...'
+        : _isBuffering
+            ? '缓冲中...'
+            : '加载中...';
+
+    return ColoredBox(
+      color: Colors.black,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() => _showPlayerControls = !_showPlayerControls);
+          if (_showPlayerControls) _startControlsHideTimer();
+        },
+        onDoubleTap: () => unawaited(_toggleExpandedPlayer()),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (!_inlineInitialized && !_inlineLoading && _inlineError == null)
+              _PosterBackdrop(detail: _infoDetail),
+            if (_inlineInitialized || _inlineLoading || _inlineError != null)
+              PlayerVideoSurface(
+                controller: _inlineVideoController,
+                initialized: _inlineInitialized,
+                fit: _videoFit,
+                showLoadingIndicator: showLoading,
+                loadingLabel: loadingLabel,
+                errorText: _inlineError,
+                onRetry: () => _loadInlineEpisode(
+                  episodeIndex: _selectedEpisodeIndex,
+                  play: true,
+                ),
+              ),
+            _buildCenterPauseIndicator(),
+            AnimatedOpacity(
+              opacity: _showPlayerControls ? 1 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: AbsorbPointer(
+                absorbing: !_showPlayerControls,
+                child: PlayerControlsOverlay(
+                  title: _infoDetail.vodName,
+                  subtitle: '${source?.name ?? '播放源'} · ${episode?.name ?? ''}',
+                  player: _inlinePlayer,
+                  bufferPosition: _bufferPosition,
+                  fullscreen: expanded,
+                  canPlayPrevious: _canPlayPrevious,
+                  canPlayNext: _canPlayNext,
+                  volume: _volume,
+                  playbackSpeed: _playbackSpeed,
+                  fitMode: _fitMode,
+                  fitLabel: _fitLabel,
+                  speedOptions: const [0.5, 0.75, 1, 1.25, 1.5, 2],
+                  episodesActive: _episodeDrawerOpen,
+                  compact: compact,
+                  fullscreenTooltip: isMobilePlatform ? '全屏播放' : '全窗口播放',
+                  fullscreenExitTooltip: isMobilePlatform ? '退出全屏' : '退出全窗口',
+                  onBackPressed: () {
+                    if (_playerExpanded) {
+                      unawaited(_exitExpandedPlayer());
+                    } else {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
+                  onPlayPause: _toggleInlinePlayPause,
+                  onSeek: _seekInline,
+                  onSpeedSelected: _setInlineSpeed,
+                  onFitSelected: _setInlineFit,
+                  onVolumeChanged: _setInlineVolume,
+                  onToggleFullscreen: _toggleExpandedPlayer,
+                  onToggleEpisodes: _toggleEpisodeDrawer,
+                  onPreviousEpisode:
+                      _canPlayPrevious ? _selectPreviousEpisode : null,
+                  onNextEpisode: _canPlayNext ? _selectNextEpisode : null,
+                  onInteractionStart: () => _controlsHideTimer?.cancel(),
+                  onInteractionEnd: _startControlsHideTimer,
+                ),
               ),
             ),
-          if (_detail.vodActor != null || _detail.vodDirector != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: _MetaChips(detail: _detail),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterPauseIndicator() {
+    return StreamBuilder<bool>(
+      stream: _inlinePlayer.stream.playing,
+      initialData: _inlinePlayer.state.playing,
+      builder: (context, snapshot) {
+        final playing = snapshot.data ?? false;
+        if (playing || !_inlineInitialized || _inlineError != null) {
+          return const SizedBox.shrink();
+        }
+        return IgnorePointer(
+          child: Center(
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.45),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                size: 44,
+                color: Colors.white,
               ),
             ),
-          if (_playResult != null && _playResult!.sources.isNotEmpty)
-            ..._buildSourceSlivers(context, cs),
-          const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEpisodeDrawerLayer() {
+    final result = _selectedPlayResult;
+    if (result == null) return const SizedBox.shrink();
+    final mediaWidth = MediaQuery.of(context).size.width;
+    final width = 340.0.clamp(280.0, mediaWidth * 0.85);
+
+    return Stack(
+      children: [
+        IgnorePointer(
+          ignoring: !_episodeDrawerOpen,
+          child: GestureDetector(
+            onTap: _closeEpisodeDrawer,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              color:
+                  Colors.black.withValues(alpha: _episodeDrawerOpen ? 0.4 : 0),
+            ),
+          ),
+        ),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          right: _episodeDrawerOpen ? 0 : -width - 16,
+          top: 0,
+          bottom: 0,
+          width: width,
+          child: Material(
+            color: Colors.transparent,
+            elevation: 12,
+            child: PlayerEpisodePanel(
+              detail: _detail,
+              playResult: result,
+              currentSourceIndex: 0,
+              currentEpisodeIndex: _selectedEpisodeIndex,
+              onSourceSelected: (_) {},
+              onEpisodeSelected: (index) {
+                _closeEpisodeDrawer();
+                unawaited(_selectInlineEpisode(index));
+              },
+              onClose: _closeEpisodeDrawer,
+              glassMode: true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoBlock(
+    BuildContext context,
+    ColorScheme cs, {
+    required bool compact,
+  }) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(compact ? 0 : 16, 4, compact ? 0 : 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _infoDetail.vodName,
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w800),
+            maxLines: compact ? 2 : 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _Tag(_selectedLine?.source.name ?? '片源 ${_detail.sourceKey}',
+                  color: cs.primaryContainer, textColor: cs.onPrimaryContainer),
+              if (_infoDetail.vodYear != null &&
+                  _infoDetail.vodYear!.isNotEmpty)
+                _Tag(_infoDetail.vodYear!),
+              if (_infoDetail.vodArea != null &&
+                  _infoDetail.vodArea!.isNotEmpty)
+                _Tag(_infoDetail.vodArea!),
+              if (_infoDetail.typeName != null &&
+                  _infoDetail.typeName!.isNotEmpty)
+                _Tag(_infoDetail.typeName!),
+              if (_infoDetail.vodRemarks != null &&
+                  _infoDetail.vodRemarks!.isNotEmpty)
+                _Tag(_infoDetail.vodRemarks!),
+            ],
+          ),
+          if (!compact &&
+              _infoDetail.vodContent != null &&
+              _infoDetail.vodContent!.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _ExpandableText(text: _infoDetail.vodContent!),
+          ],
+          if (!compact &&
+              (_infoDetail.vodActor != null ||
+                  _infoDetail.vodDirector != null)) ...[
+            const SizedBox(height: 12),
+            _MetaChips(detail: _infoDetail),
+          ],
         ],
       ),
     );
   }
 
-  List<Widget> _buildSourceSlivers(BuildContext context, ColorScheme cs) {
-    final pr = _playResult!;
-    return [
-      for (var si = 0; si < pr.sources.length; si++) ...[
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              pr.sources[si].name.isEmpty
-                  ? '片源 ${_detail.sourceKey} · 播放源 ${si + 1}'
-                  : pr.sources[si].name,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleSmall
-                  ?.copyWith(color: cs.onSurfaceVariant),
+  Widget _buildActionBlock(BuildContext context) {
+    return _DetailActionRow(
+      hasPlay: _selectedPlayResult != null,
+      hasResume: _resumeProgress > 0,
+      sourceEnabled: _sourceEnabled,
+      sourceToggleLoading: _sourceToggleLoading,
+      onPlay: () => _openPlayer(0, _resumeEpisodeIndex, _resumeProgress),
+      onPlayFromStart: () => _openPlayer(0, 0, 0),
+      onDisableSource: _disableCurrentSource,
+    );
+  }
+
+  Widget _buildSourceSwitcher(
+    BuildContext context,
+    ColorScheme cs, {
+    bool padded = true,
+  }) {
+    if (_playableLines.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: padded ? 16 : 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '播放源',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _selectBestLine,
+                icon: const Icon(Icons.speed_rounded, size: 18),
+                label: const Text('自动优选'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                ...ScrollConfiguration.of(context).dragDevices,
+                PointerDeviceKind.mouse,
+              },
+              scrollbars: false,
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var index = 0; index < _playableLines.length; index++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        selected: index == _selectedLineIndex,
+                        label: Text(_playableLines[index].chipLabel),
+                        onSelected: (_) => _selectLine(index),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEpisodeGrid(BuildContext context, ColorScheme cs) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: _EpisodeGridBox(
+          source: _selectedLine?.source,
+          selectedEpisodeIndex: _selectedEpisodeIndex,
+          resumeEpisodeIndex: _resumeEpisodeIndex,
+          resumeProgress: _resumeProgress,
+          onEpisode: (index, _) => _selectInlineEpisode(index),
         ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          sliver: SliverGrid.builder(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 100,
-              childAspectRatio: 2.4,
-              mainAxisSpacing: 6,
-              crossAxisSpacing: 6,
+      ),
+    );
+  }
+}
+
+class _PlayableLine {
+  const _PlayableLine({
+    required this.detail,
+    required this.source,
+    required this.site,
+  });
+
+  final VodItem detail;
+  final PlaySource source;
+  final SiteWithStatus? site;
+
+  String get chipLabel {
+    final speed = site?.responseTimeMs;
+    if (speed == null || speed <= 0) {
+      return source.name;
+    }
+    return '${source.name} · ${speed}ms';
+  }
+}
+
+class _RightPanelCover extends StatelessWidget {
+  const _RightPanelCover({required this.detail});
+
+  final VodItem detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 150,
+          height: 220,
+          child: detail.vodPic != null && detail.vodPic!.isNotEmpty
+              ? Image.network(
+                  detail.vodPic!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _CoverFallback(detail: detail),
+                )
+              : _CoverFallback(detail: detail),
+        ),
+      ),
+    );
+  }
+}
+
+class _CoverFallback extends StatelessWidget {
+  const _CoverFallback({required this.detail});
+
+  final VodItem detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      color: cs.surfaceContainerHighest,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(12),
+      child: Text(
+        detail.vodName,
+        maxLines: 5,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
             ),
-            itemCount: pr.sources[si].episodes.length,
-            itemBuilder: (context, ei) {
-              final ep = pr.sources[si].episodes[ei];
-              final isResume =
-                  si == _resumeSourceIndex && ei == _resumeEpisodeIndex;
-              return FilledButton.tonal(
-                style: isResume
-                    ? FilledButton.styleFrom(
-                        backgroundColor: cs.primaryContainer,
-                        foregroundColor: cs.onPrimaryContainer,
-                      )
-                    : null,
-                onPressed: () =>
-                    _openPlayer(si, ei, isResume ? _resumeProgress : 0),
-                child: Text(
-                  ep.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              );
-            },
+      ),
+    );
+  }
+}
+
+class _PosterBackdrop extends StatelessWidget {
+  const _PosterBackdrop({required this.detail});
+
+  final VodItem detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final pic = detail.vodPic;
+    if (pic == null || pic.isEmpty) {
+      return const ColoredBox(color: Colors.black);
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Image.network(
+            pic,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withValues(alpha: 0.22),
+                Colors.black.withValues(alpha: 0.78),
+              ],
+            ),
           ),
         ),
       ],
-    ];
+    );
+  }
+}
+
+class _EpisodeGridBox extends StatelessWidget {
+  const _EpisodeGridBox({
+    required this.source,
+    required this.selectedEpisodeIndex,
+    required this.resumeEpisodeIndex,
+    required this.resumeProgress,
+    required this.onEpisode,
+  });
+
+  final PlaySource? source;
+  final int selectedEpisodeIndex;
+  final int resumeEpisodeIndex;
+  final double resumeProgress;
+  final void Function(int index, double progress) onEpisode;
+
+  @override
+  Widget build(BuildContext context) {
+    final episodes = source?.episodes ?? const <PlayEpisode>[];
+    if (episodes.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 8),
+          child: Text(
+            '剧集',
+            style: Theme.of(context)
+                .textTheme
+                .titleSmall
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 100,
+            childAspectRatio: 2.4,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+          ),
+          itemCount: episodes.length,
+          itemBuilder: (context, index) {
+            final ep = episodes[index];
+            final isResume = index == resumeEpisodeIndex && resumeProgress > 0;
+            final isSelected = index == selectedEpisodeIndex;
+            return FilledButton.tonal(
+              style: isSelected
+                  ? FilledButton.styleFrom(
+                      backgroundColor: cs.primary,
+                      foregroundColor: cs.onPrimary,
+                    )
+                  : isResume
+                      ? FilledButton.styleFrom(
+                          backgroundColor: cs.primaryContainer,
+                          foregroundColor: cs.onPrimaryContainer,
+                        )
+                      : null,
+              onPressed: () => onEpisode(index, isResume ? resumeProgress : 0),
+              child: Text(
+                ep.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 }
 
@@ -435,6 +1503,7 @@ class _DetailActionRow extends StatelessWidget {
 
 // ─── SliverAppBar ────────────────────────────────────────────────────────────
 
+// ignore: unused_element
 class _DetailSliverAppBar extends StatelessWidget {
   const _DetailSliverAppBar({
     required this.detail,
@@ -462,8 +1531,8 @@ class _DetailSliverAppBar extends StatelessWidget {
               behavior: HitTestBehavior.translucent,
               onPanStart: (_) =>
                   Future<void>.microtask(startPlatformWindowDrag),
-              child:
-                  const SizedBox(width: double.infinity, height: kToolbarHeight),
+              child: const SizedBox(
+                  width: double.infinity, height: kToolbarHeight),
             )
           : Text(
               detail.vodName,
@@ -705,6 +1774,7 @@ class _ExpandableTextState extends State<_ExpandableText> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final text = _cleanText(widget.text);
     return GestureDetector(
       onTap: () => setState(() => _expanded = !_expanded),
       child: Column(
@@ -716,7 +1786,7 @@ class _ExpandableTextState extends State<_ExpandableText> {
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
             firstChild: Text(
-              widget.text,
+              text,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context)
@@ -725,7 +1795,7 @@ class _ExpandableTextState extends State<_ExpandableText> {
                   ?.copyWith(color: cs.onSurfaceVariant),
             ),
             secondChild: Text(
-              widget.text,
+              text,
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
@@ -808,4 +1878,51 @@ class _MetaChips extends StatelessWidget {
       ],
     );
   }
+}
+
+String _normalizeTitle(String value) {
+  return value
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll(RegExp(r'[：:·・\-—_（）()【】\[\]]'), '')
+      .toLowerCase();
+}
+
+int _metadataScore(VodItem item) {
+  var score = 0;
+  if (_hasText(item.vodPic)) score += 4;
+  if (_hasText(item.vodContent)) score += 4;
+  if (_hasText(item.vodActor)) score += 2;
+  if (_hasText(item.vodDirector)) score += 2;
+  if (_hasText(item.vodYear)) score += 1;
+  if (_hasText(item.vodArea)) score += 1;
+  if (_hasText(item.typeName)) score += 1;
+  return score;
+}
+
+bool _hasText(String? value) => value != null && value.trim().isNotEmpty;
+
+String? _firstText(Iterable<String?> values) {
+  for (final value in values) {
+    if (_hasText(value)) {
+      return value!.trim();
+    }
+  }
+  return null;
+}
+
+String _cleanText(String value) {
+  return value
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</p\s*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll(RegExp(r'[ \t]+'), ' ')
+      .replaceAll(RegExp(r'\n\s*\n+'), '\n')
+      .trim();
 }

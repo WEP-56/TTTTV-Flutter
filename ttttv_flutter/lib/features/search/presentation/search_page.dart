@@ -83,14 +83,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   IconButton(
                     icon: const Icon(Icons.stop_circle_rounded),
                     tooltip: '停止搜索',
-                    onPressed: () => ref.read(searchControllerProvider.notifier).cancelSearch(),
+                    onPressed: () => ref
+                        .read(searchControllerProvider.notifier)
+                        .cancelSearch(),
                   )
                 else if (_controller.text.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
                     onPressed: () {
                       _controller.clear();
-                      ref.read(searchControllerProvider.notifier).clearResults();
+                      ref
+                          .read(searchControllerProvider.notifier)
+                          .clearResults();
                       setState(() {});
                     },
                   ),
@@ -102,8 +106,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           _SourceFilterRow(
             showFilter: _showSourceFilter,
             selectedKeys: _selectedSourceKeys,
-            onToggleFilter: () => setState(() => _showSourceFilter = !_showSourceFilter),
-            onSelectionChanged: (keys) => setState(() => _selectedSourceKeys = keys),
+            onToggleFilter: () =>
+                setState(() => _showSourceFilter = !_showSourceFilter),
+            onSelectionChanged: (keys) =>
+                setState(() => _selectedSourceKeys = keys),
           ),
           Expanded(
             child: _buildBody(context, state, colorScheme),
@@ -142,17 +148,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
 
     if (state.results.isNotEmpty) {
+      final targets = _aggregateVodTargets(state.results);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (state.isLoading)
-            const LinearProgressIndicator(),
+          if (state.isLoading) const LinearProgressIndicator(),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
               state.isLoading
-                  ? '已找到 ${state.results.length} 条结果，继续搜索中...'
-                  : '共 ${state.results.length} 条结果'
+                  ? '已找到 ${targets.length} 个影视，继续匹配片源中...'
+                  : '共 ${targets.length} 个影视'
                       '${state.filteredCount > 0 ? '，已过滤 ${state.filteredCount} 条' : ''}',
               style: Theme.of(context)
                   .textTheme
@@ -169,11 +175,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
               ),
-              itemCount: state.results.length,
+              itemCount: targets.length,
               itemBuilder: (context, index) {
-                final item = state.results[index];
+                final target = targets[index];
+                final item = target.representative;
                 return _VodCard(
                   item: item,
+                  sourceCount: target.sourceCount,
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => DetailPage(initialItem: item),
@@ -265,10 +273,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 class _VodCard extends StatelessWidget {
   const _VodCard({
     required this.item,
+    required this.sourceCount,
     required this.onTap,
   });
 
   final VodItem item;
+  final int sourceCount;
   final VoidCallback onTap;
 
   @override
@@ -317,11 +327,102 @@ class _VodCard extends StatelessWidget {
                       ),
                 ),
               ),
+            if (sourceCount > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                child: Text(
+                  '$sourceCount 个片源',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+class _VodTarget {
+  const _VodTarget({
+    required this.representative,
+    required this.sourceCount,
+  });
+
+  final VodItem representative;
+  final int sourceCount;
+}
+
+List<_VodTarget> _aggregateVodTargets(List<VodItem> items) {
+  final grouped = <String, List<VodItem>>{};
+  final order = <String>[];
+
+  for (final item in items) {
+    final type = _typeKey(item);
+    final key = [
+      _normalizeTitle(item.vodName),
+      item.vodYear ?? 'unknown',
+      type,
+    ].join('|');
+    grouped.putIfAbsent(key, () {
+      order.add(key);
+      return <VodItem>[];
+    }).add(item);
+  }
+
+  return [
+    for (final key in order)
+      _VodTarget(
+        representative: _pickRepresentative(grouped[key]!),
+        sourceCount: grouped[key]!
+            .map((item) => item.sourceKey)
+            .where((key) => key.isNotEmpty)
+            .toSet()
+            .length,
+      ),
+  ];
+}
+
+VodItem _pickRepresentative(List<VodItem> group) {
+  final withPoster = group.where((item) => item.vodPic != null).toList();
+  final candidates = withPoster.isEmpty ? group : withPoster;
+  candidates.sort((a, b) {
+    final aScore = _metadataScore(a);
+    final bScore = _metadataScore(b);
+    return bScore.compareTo(aScore);
+  });
+  return candidates.first;
+}
+
+int _metadataScore(VodItem item) {
+  var score = 0;
+  if (item.vodPic != null && item.vodPic!.isNotEmpty) score += 4;
+  if (item.vodContent != null && item.vodContent!.isNotEmpty) score += 3;
+  if (item.vodRemarks != null && item.vodRemarks!.isNotEmpty) score += 1;
+  if (item.vodYear != null && item.vodYear!.isNotEmpty) score += 1;
+  return score;
+}
+
+String _typeKey(VodItem item) {
+  final playUrl = item.vodPlayUrl;
+  if (playUrl.isNotEmpty &&
+      !playUrl.contains('#') &&
+      !playUrl.contains(r'$$$')) {
+    return 'movie';
+  }
+  return 'tv';
+}
+
+String _normalizeTitle(String value) {
+  return value
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll(RegExp(r'[：:·・\-—_（）()【】\[\]]'), '')
+      .toLowerCase();
 }
 
 class _Placeholder extends StatelessWidget {
@@ -458,7 +559,10 @@ class _SourceFilterRow extends ConsumerWidget {
                       return FilterChip(
                         label: Text(
                           site.name,
-                          style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight:
+                                  selected ? FontWeight.w600 : FontWeight.w400),
                         ),
                         selected: selected,
                         showCheckmark: false,

@@ -39,6 +39,8 @@ class PlayerControlsOverlay extends StatelessWidget {
     this.onDragWindow,
     this.episodesActive = false,
     this.compact = false,
+    this.fullscreenTooltip,
+    this.fullscreenExitTooltip,
     super.key,
   });
 
@@ -68,6 +70,8 @@ class PlayerControlsOverlay extends StatelessWidget {
   final Future<void> Function()? onNextEpisode;
   final VoidCallback? onDragWindow;
   final bool episodesActive;
+  final String? fullscreenTooltip;
+  final String? fullscreenExitTooltip;
 
   /// 紧凑模式下隐藏部分次要按钮（手机竖屏 / 极小窗口）。
   final bool compact;
@@ -127,6 +131,8 @@ class PlayerControlsOverlay extends StatelessWidget {
                 onSpeedSelected: onSpeedSelected,
                 onToggleEpisodes: onToggleEpisodes,
                 onToggleFullscreen: onToggleFullscreen,
+                fullscreenTooltip: fullscreenTooltip,
+                fullscreenExitTooltip: fullscreenExitTooltip,
                 onInteractionStart: onInteractionStart,
                 onInteractionEnd: onInteractionEnd,
               ),
@@ -262,6 +268,8 @@ class _BottomDock extends StatelessWidget {
     required this.onSpeedSelected,
     required this.onToggleEpisodes,
     required this.onToggleFullscreen,
+    required this.fullscreenTooltip,
+    required this.fullscreenExitTooltip,
     required this.onInteractionStart,
     required this.onInteractionEnd,
   });
@@ -282,6 +290,8 @@ class _BottomDock extends StatelessWidget {
   final ValueChanged<double> onSpeedSelected;
   final VoidCallback onToggleEpisodes;
   final Future<void> Function() onToggleFullscreen;
+  final String? fullscreenTooltip;
+  final String? fullscreenExitTooltip;
   final VoidCallback onInteractionStart;
   final VoidCallback onInteractionEnd;
 
@@ -361,7 +371,9 @@ class _BottomDock extends StatelessWidget {
                 icon: fullscreen
                     ? Icons.fullscreen_exit_rounded
                     : Icons.fullscreen_rounded,
-                tooltip: fullscreen ? '退出全屏' : '全屏',
+                tooltip: fullscreen
+                    ? (fullscreenExitTooltip ?? '退出全屏')
+                    : (fullscreenTooltip ?? '全屏'),
                 compact: compact,
                 onPressed: () => unawaited(onToggleFullscreen()),
               ),
@@ -433,8 +445,8 @@ class _PlayerScrubberState extends State<_PlayerScrubber> {
   @override
   Widget build(BuildContext context) {
     final totalMs = _duration.inMilliseconds.toDouble();
-    final activeValue =
-        (_dragValue ?? _position.inMilliseconds.toDouble()).clamp(0, totalMs > 0 ? totalMs : 1);
+    final activeValue = (_dragValue ?? _position.inMilliseconds.toDouble())
+        .clamp(0, totalMs > 0 ? totalMs : 1);
     final bufferedValue = _bufferedPosition.inMilliseconds
         .toDouble()
         .clamp(activeValue.toDouble(), totalMs > 0 ? totalMs : 1);
@@ -558,8 +570,7 @@ class _SpeedButton extends StatelessWidget {
                 '${formatSpeed(value)}x',
                 style: TextStyle(
                   color: selected ? Colors.white : Colors.white70,
-                  fontWeight:
-                      selected ? FontWeight.w700 : FontWeight.w500,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 ),
               ),
             ],
@@ -759,12 +770,9 @@ class _IconActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = primary
-        ? (compact ? 44.0 : 50.0)
-        : (compact ? 36.0 : 40.0);
-    final iconSize = primary
-        ? (compact ? 26.0 : 30.0)
-        : (compact ? 20.0 : 22.0);
+    final size = primary ? (compact ? 44.0 : 50.0) : (compact ? 36.0 : 40.0);
+    final iconSize =
+        primary ? (compact ? 26.0 : 30.0) : (compact ? 20.0 : 22.0);
     return Tooltip(
       message: tooltip,
       child: SizedBox(

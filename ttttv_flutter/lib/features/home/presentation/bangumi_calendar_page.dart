@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
+import '../../detail/presentation/detail_page.dart';
 import '../data/douban_repository.dart';
 
 /// Bangumi 新番日历页面。
@@ -115,8 +117,7 @@ class _BangumiCalendarPageState extends ConsumerState<BangumiCalendarPage> {
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: List.generate(7, (index) {
-                        final isToday =
-                            index == DateTime.now().weekday - 1;
+                        final isToday = index == DateTime.now().weekday - 1;
                         final isSelected = index == _selectedDay;
                         return Padding(
                           padding: const EdgeInsets.only(right: 6),
@@ -127,9 +128,8 @@ class _BangumiCalendarPageState extends ConsumerState<BangumiCalendarPage> {
                                 fontWeight: isSelected
                                     ? FontWeight.w700
                                     : FontWeight.w500,
-                                color: isToday && !isSelected
-                                    ? cs.primary
-                                    : null,
+                                color:
+                                    isToday && !isSelected ? cs.primary : null,
                               ),
                             ),
                             selected: isSelected,
@@ -184,8 +184,7 @@ class _BangumiCalendarPageState extends ConsumerState<BangumiCalendarPage> {
                     : items.isEmpty
                         ? const Center(child: Text('今日暂无新番'))
                         : GridView.builder(
-                            padding:
-                                const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
                             gridDelegate:
                                 const SliverGridDelegateWithMaxCrossAxisExtent(
                               maxCrossAxisExtent: 140,
@@ -198,13 +197,7 @@ class _BangumiCalendarPageState extends ConsumerState<BangumiCalendarPage> {
                               final item = items[index];
                               return _AnimeCard(
                                 item: item,
-                                onTap: () {
-                                  ref
-                                      .read(
-                                          pendingSearchProvider.notifier)
-                                      .state = item.title;
-                                  Navigator.of(context).pop();
-                                },
+                                onTap: () => _openBangumiDetail(context, item),
                               );
                             },
                           ),
@@ -213,6 +206,26 @@ class _BangumiCalendarPageState extends ConsumerState<BangumiCalendarPage> {
       ),
     );
   }
+}
+
+void _openBangumiDetail(BuildContext context, DoubanItem item) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => DetailPage(
+        initialItem: VodItem(
+          sourceKey: '',
+          vodId: '',
+          vodName: item.title,
+          vodPlayUrl: '',
+          vodPic: item.poster,
+          vodYear: item.year,
+          vodRemarks: item.rate == null || item.rate!.isEmpty
+              ? null
+              : 'Bangumi ${item.rate}',
+        ),
+      ),
+    ),
+  );
 }
 
 class _AnimeCard extends StatelessWidget {

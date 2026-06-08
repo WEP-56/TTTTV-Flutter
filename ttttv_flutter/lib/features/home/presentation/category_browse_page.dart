@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
 import '../../../core/providers.dart';
+import '../../detail/presentation/detail_page.dart';
 import '../data/douban_repository.dart';
 
 /// 分类浏览页面。
@@ -27,8 +29,7 @@ class CategoryBrowsePage extends ConsumerStatefulWidget {
   final String title;
 
   @override
-  ConsumerState<CategoryBrowsePage> createState() =>
-      _CategoryBrowsePageState();
+  ConsumerState<CategoryBrowsePage> createState() => _CategoryBrowsePageState();
 }
 
 class _CategoryBrowsePageState extends ConsumerState<CategoryBrowsePage> {
@@ -232,8 +233,7 @@ class _CategoryBrowsePageState extends ConsumerState<CategoryBrowsePage> {
                         ? const Center(child: Text('暂无内容'))
                         : GridView.builder(
                             controller: _scrollController,
-                            padding:
-                                const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                             gridDelegate:
                                 const SliverGridDelegateWithMaxCrossAxisExtent(
                               maxCrossAxisExtent: 140,
@@ -241,8 +241,7 @@ class _CategoryBrowsePageState extends ConsumerState<CategoryBrowsePage> {
                               mainAxisSpacing: 10,
                               crossAxisSpacing: 10,
                             ),
-                            itemCount:
-                                _items.length + (_hasMore ? 1 : 0),
+                            itemCount: _items.length + (_hasMore ? 1 : 0),
                             itemBuilder: (context, index) {
                               if (index >= _items.length) {
                                 return const Center(
@@ -257,13 +256,11 @@ class _CategoryBrowsePageState extends ConsumerState<CategoryBrowsePage> {
                               return _BrowseCard(
                                 item: item,
                                 source: source,
-                                onTap: () {
-                                  ref
-                                      .read(
-                                          pendingSearchProvider.notifier)
-                                      .state = item.title;
-                                  Navigator.of(context).pop();
-                                },
+                                onTap: () => _openDoubanDetail(
+                                  context,
+                                  item,
+                                  source,
+                                ),
                               );
                             },
                           ),
@@ -325,9 +322,7 @@ class _FilterBar extends StatelessWidget {
           _FilterRow(
             label: typeOptions.first.label == '全部' &&
                     typeOptions.any((o) =>
-                        o.label == '华语' ||
-                        o.label == '国产' ||
-                        o.label == '国内')
+                        o.label == '华语' || o.label == '国产' || o.label == '国内')
                 ? '地区'
                 : '类型',
             options: typeOptions,
@@ -486,4 +481,28 @@ String _proxyDoubanImage(String url, DoubanDataSource source) {
     case DoubanDataSource.custom:
       return url;
   }
+}
+
+void _openDoubanDetail(
+  BuildContext context,
+  DoubanItem item,
+  DoubanDataSource source,
+) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => DetailPage(
+        initialItem: VodItem(
+          sourceKey: '',
+          vodId: '',
+          vodName: item.title,
+          vodPlayUrl: '',
+          vodPic: _proxyDoubanImage(item.poster, source),
+          vodYear: item.year,
+          vodRemarks: item.rate == null || item.rate!.isEmpty
+              ? null
+              : '豆瓣 ${item.rate}',
+        ),
+      ),
+    ),
+  );
 }

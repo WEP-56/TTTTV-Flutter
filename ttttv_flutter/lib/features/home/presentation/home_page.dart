@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/vod_models.dart';
 import '../../../core/providers.dart';
+import '../../detail/presentation/detail_page.dart';
 import '../../home/data/douban_repository.dart';
 import 'bangumi_calendar_page.dart';
 import 'category_browse_page.dart';
@@ -26,9 +28,11 @@ final homeRecommendProvider = FutureProvider<HomeRecommendData>((ref) async {
   final repo = DoubanRepository(dio: dio);
 
   final results = await Future.wait([
-    repo.fetchCategory(source: source, kind: 'movie', category: '热门', type: '全部'),
+    repo.fetchCategory(
+        source: source, kind: 'movie', category: '热门', type: '全部'),
     repo.fetchCategory(source: source, kind: 'tv', category: '热门', type: '全部'),
-    repo.fetchCategory(source: source, kind: 'tv', category: 'show', type: 'show'),
+    repo.fetchCategory(
+        source: source, kind: 'tv', category: 'show', type: 'show'),
     repo.fetchBangumiCalendar(),
   ]);
 
@@ -45,21 +49,43 @@ List<DoubanItem> _dedupeAnime(List<DoubanItem> items) {
   return items.where((item) => seen.add(item.id)).toList();
 }
 
-void _triggerSearch(WidgetRef ref, String title) {
-  ref.read(pendingSearchProvider.notifier).state = title;
-}
-
 String _proxyDoubanImage(String url, DoubanDataSource source) {
   if (url.isEmpty || !url.contains('doubanio.com')) return url;
   switch (source) {
     case DoubanDataSource.tencentCDN:
-      return url.replaceAll(RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.net');
+      return url.replaceAll(
+          RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.net');
     case DoubanDataSource.aliCDN:
-      return url.replaceAll(RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.com');
+      return url.replaceAll(
+          RegExp(r'img\d+\.doubanio\.com'), 'img.doubanio.cmliussss.com');
     case DoubanDataSource.direct:
     case DoubanDataSource.custom:
       return url;
   }
+}
+
+void _openDoubanDetail(
+  BuildContext context,
+  DoubanItem item,
+  DoubanDataSource source,
+) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => DetailPage(
+        initialItem: VodItem(
+          sourceKey: '',
+          vodId: '',
+          vodName: item.title,
+          vodPlayUrl: '',
+          vodPic: _proxyDoubanImage(item.poster, source),
+          vodYear: item.year,
+          vodRemarks: item.rate == null || item.rate!.isEmpty
+              ? null
+              : '豆瓣 ${item.rate}',
+        ),
+      ),
+    ),
+  );
 }
 
 class HomePage extends ConsumerWidget {
@@ -119,9 +145,11 @@ class HomePage extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.error_outline_rounded, size: 48, color: colorScheme.error),
+                    Icon(Icons.error_outline_rounded,
+                        size: 48, color: colorScheme.error),
                     const SizedBox(height: 12),
-                    Text('推荐加载失败，请检查豆瓣数据来源设置', style: TextStyle(color: colorScheme.error)),
+                    Text('推荐加载失败，请检查豆瓣数据来源设置',
+                        style: TextStyle(color: colorScheme.error)),
                     const SizedBox(height: 16),
                     FilledButton.icon(
                       onPressed: () => ref.invalidate(homeRecommendProvider),
@@ -139,13 +167,15 @@ class HomePage extends ConsumerWidget {
                 title: '热门电影',
                 items: data.movies,
                 source: source,
-                onViewMore: () => _openCategory(context, kind: 'movie', category: '热门', type: '全部', title: '热门电影'),
+                onViewMore: () => _openCategory(context,
+                    kind: 'movie', category: '热门', type: '全部', title: '热门电影'),
               ),
               _SectionView(
                 title: '热门剧集',
                 items: data.tvShows,
                 source: source,
-                onViewMore: () => _openCategory(context, kind: 'tv', category: '热门', type: '全部', title: '热门剧集'),
+                onViewMore: () => _openCategory(context,
+                    kind: 'tv', category: '热门', type: '全部', title: '热门剧集'),
               ),
               if (data.bangumi.isNotEmpty)
                 _SectionView(
@@ -153,14 +183,16 @@ class HomePage extends ConsumerWidget {
                   items: data.bangumi,
                   source: source,
                   onViewMore: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const BangumiCalendarPage()),
+                    MaterialPageRoute(
+                        builder: (_) => const BangumiCalendarPage()),
                   ),
                 ),
               _SectionView(
                 title: '热门综艺',
                 items: data.shows,
                 source: source,
-                onViewMore: () => _openCategory(context, kind: 'tv', category: 'show', type: 'show', title: '热门综艺'),
+                onViewMore: () => _openCategory(context,
+                    kind: 'tv', category: 'show', type: 'show', title: '热门综艺'),
               ),
               const SizedBox(height: 24),
             ]),
@@ -198,7 +230,8 @@ class _SectionViewState extends State<_SectionView> {
 
   void _scrollLeft() {
     _scrollController.animateTo(
-      (_scrollController.offset - 280).clamp(0.0, _scrollController.position.maxScrollExtent),
+      (_scrollController.offset - 280)
+          .clamp(0.0, _scrollController.position.maxScrollExtent),
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
@@ -206,7 +239,8 @@ class _SectionViewState extends State<_SectionView> {
 
   void _scrollRight() {
     _scrollController.animateTo(
-      (_scrollController.offset + 280).clamp(0.0, _scrollController.position.maxScrollExtent),
+      (_scrollController.offset + 280)
+          .clamp(0.0, _scrollController.position.maxScrollExtent),
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
@@ -260,7 +294,9 @@ class _SectionViewState extends State<_SectionView> {
                 ? Center(
                     child: Text('暂无推荐',
                         style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                   )
                 : ListView.separated(
                     controller: _scrollController,
@@ -291,7 +327,7 @@ class _RecommendCard extends ConsumerWidget {
     final posterUrl = _proxyDoubanImage(item.poster, source);
 
     return GestureDetector(
-      onTap: () => _triggerSearch(ref, item.title),
+      onTap: () => _openDoubanDetail(context, item, source),
       child: SizedBox(
         width: 120,
         child: Column(
@@ -327,7 +363,8 @@ class _RecommendCard extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: cs.primaryContainer,
                     borderRadius: BorderRadius.circular(4),
