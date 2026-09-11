@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,8 +12,12 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../../core/models/vod_models.dart';
 import '../../../core/platform/platform_window.dart';
 import '../../../core/platform/screen_brightness.dart';
+import '../../../core/platform/android_media.dart';
 import '../../../core/providers.dart';
 import '../../history/domain/history_repository.dart';
+import '../../player/application/playback_loader.dart';
+import '../../player/application/dlna_controller.dart';
+import '../../player/presentation/widgets/cast_device_dialog.dart';
 import '../../player/presentation/widgets/player_controls_overlay.dart';
 import '../../player/presentation/widgets/player_episode_panel.dart';
 import '../../player/presentation/widgets/player_gesture_layer.dart';
@@ -32,7 +37,8 @@ class DetailPage extends ConsumerStatefulWidget {
   ConsumerState<DetailPage> createState() => _DetailPageState();
 }
 
-class _DetailPageState extends ConsumerState<DetailPage> {
+class _DetailPageState extends ConsumerState<DetailPage>
+    with WidgetsBindingObserver {
   static const Duration _seekStep = Duration(seconds: 10);
   static const double _volumeStep = 5;
   static const int _speedProbeBytes = 256 * 1024;
@@ -44,6 +50,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   final Set<String> _candidateKeys = {};
   final Set<String> _lineKeys = {};
   final Set<String> _detailFetchKeys = {};
+  final Set<Future<void>> _candidateTasks = {};
   final Map<int, _LineSpeedTest> _lineSpeedTests = {};
   final Set<int> _lineSpeedTesting = {};
   final FocusNode _keyboardFocusNode =
@@ -95,6 +102,21 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   bool _initialHistoryApplied = false;
   bool _restoringInitialHistory = false;
   bool _disposing = false;
+  int _episodeGeneration = 0;
+  int _selectionGeneration = 0;
+  Future<void> _episodeQueue = Future<void>.value();
+  bool _startingFirstLine = false;
+  bool _pipSupported = false;
+  bool _inPip = false;
+  bool _pipPreparing = false;
+  DlnaController? _castController;
+  DlnaDevice? _castDevice;
+  bool _castBusy = false;
+  bool _castPlaying = false;
+  bool _castPolling = false;
+  Duration _castPosition = Duration.zero;
+  Duration _castDuration = Duration.zero;
+  Timer? _castTimer;
 
   _PlayableLine? get _selectedLine =>
       _playableLines.isEmpty ? null : _playableLines[_selectedLineIndex];
@@ -137,6 +159,11 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (Platform.isAndroid) {
+      AndroidMedia.channel.setMethodCallHandler(_handleAndroidMedia);
+      unawaited(_loadPipSupport());
+    }
     _detail = widget.initialItem;
     _infoDetail = widget.initialItem;
     _inlinePlayer = Player();
@@ -175,6 +202,22 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   @override
   void dispose() {
     _disposing = true;
+    _episodeGeneration++;
+    _castTimer?.cancel();
+    final cast = _castController;
+    final device = _castDevice;
+    if (cast != null) {
+      unawaited(() async {
+        try {
+          if (device != null) await cast.command(device, 'Stop');
+        } catch (_) {
+        } finally {
+          await cast.dispose();
+        }
+      }());
+    }
+    WidgetsBinding.instance.removeObserver(this);
+    if (Platform.isAndroid) AndroidMedia.channel.setMethodCallHandler(null);
     _controlsHideTimer?.cancel();
     _progressSaveTimer?.cancel();
     unawaited(_persistProgress());
@@ -222,6 +265,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       _processedCandidateCount = 0;
       _initialHistoryApplied = false;
       _restoringInitialHistory = false;
+      _startingFirstLine = false;
     });
 
     try {
@@ -232,22 +276,25 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       final query = seed.vodName.trim();
 
       if (seed.sourceKey.isNotEmpty && seed.vodId.isNotEmpty) {
-        if (widget.initialHistory != null) {
-          await _loadSeedDetail(seed, sourceByKey, generation);
-        } else {
-          unawaited(_loadSeedDetail(seed, sourceByKey, generation));
-        }
+        await _loadSeedDetail(seed, sourceByKey, generation);
       }
 
       if (query.isNotEmpty) {
         final result = await ref.read(searchRepositoryProvider).search(
           query,
           onBatch: (batch) {
-            unawaited(_appendSearchItems(batch, sourceByKey, generation));
+            _scheduleCandidate(
+                _appendSearchItems(batch, sourceByKey, generation));
           },
         );
         if (!mounted || generation != _loadGeneration) return;
         await _appendSearchItems(result.items, sourceByKey, generation);
+      }
+
+      while (_candidateTasks.isNotEmpty &&
+          mounted &&
+          generation == _loadGeneration) {
+        await Future.wait(_candidateTasks.toList());
       }
 
       if (!mounted || generation != _loadGeneration) return;
@@ -257,6 +304,18 @@ class _DetailPageState extends ConsumerState<DetailPage> {
           _error = '未找到可播放源';
         }
       });
+      if (widget.initialHistory != null &&
+          !_initialHistoryApplied &&
+          _playableLines.isNotEmpty) {
+        await _applyInitialHistoryLineIfReady();
+        if (!mounted) return;
+        if (!_initialHistoryApplied && !_restoringInitialHistory) {
+          _initialHistoryApplied = true;
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('上次观看的片源已不可用，历史进度仍保留。请选择其他片源播放。')));
+          await _loadInlineEpisode(episodeIndex: 0);
+        }
+      }
     } catch (e) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
@@ -265,6 +324,239 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _loadPipSupport() async {
+    try {
+      final supported = await AndroidMedia.supportsPip();
+      if (mounted) setState(() => _pipSupported = supported);
+    } catch (_) {
+      // Some Android devices do not provide system picture-in-picture.
+    }
+  }
+
+  void _scheduleCandidate(Future<void> work) {
+    final task = work.catchError((Object _) {});
+    _candidateTasks.add(task);
+    unawaited(task.whenComplete(() => _candidateTasks.remove(task)));
+  }
+
+  Future<void> _handleAndroidMedia(MethodCall call) async {
+    if (!mounted) return;
+    switch (call.method) {
+      case 'pipChanged':
+        setState(() {
+          _inPip = call.arguments == true;
+          _pipPreparing = false;
+        });
+      case 'togglePlayback':
+        await _toggleInlinePlayPause();
+      case 'pipClosed':
+        await _inlinePlayer.pause();
+        await _persistProgress();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      unawaited(_persistProgress());
+    }
+    if (state == AppLifecycleState.paused &&
+        !_inPip &&
+        !_pipPreparing &&
+        _castDevice == null) {
+      unawaited(_inlinePlayer.pause());
+    }
+  }
+
+  Future<void> _enterPip() async {
+    if (!_inlineInitialized || _pipPreparing) return;
+    try {
+      setState(() => _pipPreparing = true);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      await AndroidMedia.setPlaying(_inlinePlayer.state.playing);
+      final entered = await AndroidMedia.enterPip();
+      if (!entered) throw StateError('系统未允许画中画，请在应用设置中开启画中画权限');
+      if (mounted)
+        setState(() {
+          _inPip = true;
+          _pipPreparing = false;
+        });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _pipPreparing = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('小窗播放失败：$error')));
+    }
+  }
+
+  Future<void> _openCast() async {
+    if (_castBusy || !_inlineInitialized) return;
+    if (_castDevice != null) {
+      await _showCastControls();
+      return;
+    }
+    setState(() => _castBusy = true);
+    final controller = _castController ??= DlnaController();
+    try {
+      final device = await showDialog<DlnaDevice>(
+          context: context,
+          builder: (_) => CastDeviceDialog(controller: controller));
+      if (!mounted || device == null) return;
+      final episode = _currentEpisode;
+      if (episode == null) return;
+      await _persistProgress();
+      final position = _inlinePlayer.state.position;
+      await controller.cast(
+          device, episode, '${_infoDetail.vodName} · ${episode.name}');
+      if (!mounted) return;
+      setState(() {
+        _castDevice = device;
+        _castPosition = Duration.zero;
+        _castDuration = _inlinePlayer.state.duration;
+        _castPlaying = true;
+      });
+      await _inlinePlayer.pause();
+      if (position > Duration.zero) {
+        try {
+          await controller.seek(device, position);
+          _castPosition = position;
+        } catch (_) {
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已开始投屏，但电视未接受进度定位，请在投屏控制中重试。')));
+        }
+      }
+      _castTimer = Timer.periodic(
+          const Duration(seconds: 3), (_) => unawaited(_pollCast()));
+      if (mounted) await _showCastControls();
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('投屏失败：$error')));
+    } finally {
+      if (mounted) setState(() => _castBusy = false);
+    }
+  }
+
+  Future<void> _pollCast() async {
+    final controller = _castController;
+    final device = _castDevice;
+    if (_castPolling || device == null || controller == null) return;
+    _castPolling = true;
+    try {
+      final position = await controller.position(device);
+      if (!mounted || _castDevice != device) return;
+      setState(() {
+        _castPosition = position.position;
+        _castDuration = position.duration;
+      });
+    } catch (_) {
+      // Keep the last known position across a transient TV/network timeout.
+    } finally {
+      _castPolling = false;
+    }
+  }
+
+  Future<void> _stopCasting({required bool resumeLocally}) async {
+    final device = _castDevice;
+    final controller = _castController;
+    if (device == null || controller == null) return;
+    await _pollCast();
+    await _persistProgress();
+    final position = _castPosition;
+    await controller.command(device, 'Stop');
+    await controller.releaseMedia();
+    _castTimer?.cancel();
+    _castDevice = null;
+    if (!mounted) return;
+    setState(() {});
+    if (resumeLocally) {
+      await _loadInlineEpisode(
+          episodeIndex: _selectedEpisodeIndex,
+          play: true,
+          startAtSeconds: position.inMilliseconds / 1000,
+          restart: true);
+    }
+  }
+
+  Future<void> _showCastControls() async {
+    if (!mounted || _castDevice == null) return;
+    var busy = false;
+    String? error;
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) =>
+            StatefulBuilder(builder: (sheetContext, update) {
+              Future<void> run(Future<void> Function() action) async {
+                update(() {
+                  busy = true;
+                  error = null;
+                });
+                try {
+                  await action();
+                } catch (e) {
+                  if (sheetContext.mounted) update(() => error = e.toString());
+                } finally {
+                  if (sheetContext.mounted) update(() => busy = false);
+                }
+              }
+
+              return SafeArea(
+                  top: false,
+                  child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text('正在投屏到 ${_castDevice?.name ?? '电视'}',
+                            style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        const Text('本机负责转发视频，投屏期间请保持应用运行。'),
+                        if (error != null)
+                          Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Text(error!)),
+                        if (busy) const LinearProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Wrap(spacing: 12, children: [
+                          IconButton(
+                              tooltip: '后退 30 秒',
+                              icon: const Icon(Icons.replay_30_rounded),
+                              onPressed: busy
+                                  ? null
+                                  : () => run(() => _seekInline(_castPosition -
+                                      const Duration(seconds: 30)))),
+                          IconButton(
+                              tooltip: _castPlaying ? '暂停' : '播放',
+                              icon: Icon(_castPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded),
+                              onPressed: busy
+                                  ? null
+                                  : () => run(_toggleInlinePlayPause)),
+                          IconButton(
+                              tooltip: '前进 30 秒',
+                              icon: const Icon(Icons.forward_30_rounded),
+                              onPressed: busy
+                                  ? null
+                                  : () => run(() => _seekInline(_castPosition +
+                                      const Duration(seconds: 30)))),
+                        ]),
+                        FilledButton.icon(
+                            icon: const Icon(Icons.stop_screen_share_rounded),
+                            label: const Text('结束投屏并在本机继续'),
+                            onPressed: busy
+                                ? null
+                                : () => run(() async {
+                                      await _stopCasting(resumeLocally: true);
+                                      if (sheetContext.mounted)
+                                        Navigator.of(sheetContext).pop();
+                                    })),
+                      ])));
+            }));
   }
 
   Future<void> _loadSeedDetail(
@@ -299,6 +591,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }).toList();
     final matches =
         exactMatches.isEmpty ? items.toList(growable: false) : exactMatches;
+    if (widget.initialHistory != null && exactMatches.isEmpty) return;
     matches.sort((a, b) {
       return _candidateRank(b, seed, normalizedQuery)
           .compareTo(_candidateRank(a, seed, normalizedQuery));
@@ -314,7 +607,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       }
       _processedCandidateCount++;
       await _appendCandidate(item, sourceByKey, generation);
-      unawaited(_loadCandidateDetail(item, sourceByKey, generation));
+      _scheduleCandidate(_loadCandidateDetail(item, sourceByKey, generation));
       if (!mounted || generation != _loadGeneration) return;
     }
   }
@@ -364,6 +657,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         _playableLines[i] = _PlayableLine(
           detail: merged,
           source: line.source,
+          rawName: line.rawName,
           site: line.site,
         );
       }
@@ -424,6 +718,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       }
       final line = _PlayableLine(
         detail: candidate,
+        rawName: source.name,
         source: PlaySource(
           name: _sourceDisplayName(candidate, source, site),
           episodes: source.episodes,
@@ -441,6 +736,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     }
 
     if (_playableLines.length == addedIndexes.length) {
+      _startingFirstLine = true;
+      final selection = _selectionGeneration;
       final selectedLineIndex = _findHistoryLineIndex() ?? 0;
       final selected = _playableLines[selectedLineIndex];
       final (ei, prog) =
@@ -450,7 +747,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                 vodId: selected.detail.vodId,
                 sourceKey: selected.detail.sourceKey,
               );
-      if (!mounted || generation != _loadGeneration) return;
+      if (!mounted ||
+          generation != _loadGeneration ||
+          selection != _selectionGeneration) {
+        _startingFirstLine = false;
+        return;
+      }
 
       setState(() {
         _selectedLineIndex = selectedLineIndex;
@@ -467,6 +769,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         _selectedEpisodeIndex = ei;
         _loading = false;
       });
+      _startingFirstLine = false;
       _initialHistoryApplied = widget.initialHistory == null ||
           _historyMatchesLine(
             widget.initialHistory!,
@@ -480,6 +783,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         unawaited(_loadInlineEpisode(
           episodeIndex: ei,
           startAtSeconds: prog,
+          play: widget.initialHistory != null,
         ));
       }
     } else {
@@ -514,6 +818,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         : existing.source.episodes;
     _playableLines[index] = _PlayableLine(
       detail: _mergeVodItem(existing.detail, detail),
+      rawName: source.name,
       source: PlaySource(
         name: existing.source.name,
         episodes: episodes,
@@ -655,7 +960,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     final initialHistory = widget.initialHistory;
     WatchHistoryItem? resumeItem;
     if (initialHistory != null &&
-        _historyMatchesLine(initialHistory, line, index, strict: true)) {
+        !_initialHistoryApplied &&
+        _historyMatchesLine(initialHistory, line, index, strict: false)) {
       resumeItem = initialHistory;
     } else {
       final history = await _historyRepository.fetchHistory();
@@ -676,7 +982,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       sourceIndex: 0,
       episodeIndex: resumeItem.episodeIndex,
     );
-    return (ei, resumeItem.progress);
+    return (
+      ei,
+      resumeItem.progress.isFinite
+          ? resumeItem.progress.clamp(0, double.infinity).toDouble()
+          : 0.0
+    );
   }
 
   int? _findHistoryLineIndex() {
@@ -697,22 +1008,31 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _applyInitialHistoryLineIfReady() async {
-    if (_initialHistoryApplied || widget.initialHistory == null) return;
+    if (_startingFirstLine ||
+        _initialHistoryApplied ||
+        widget.initialHistory == null) return;
     final index = _findHistoryLineIndex();
     if (index == null) return;
-    _initialHistoryApplied = true;
-    await _restoreInitialHistoryAtLine(index);
+    if (_restoringInitialHistory) return;
+    _restoringInitialHistory = true;
+    try {
+      await _restoreInitialHistoryAtLine(index);
+    } finally {
+      _restoringInitialHistory = false;
+      _initialHistoryApplied = true;
+    }
   }
 
   Future<void> _restoreInitialHistoryAtLine(int index) async {
     if (index < 0 || index >= _playableLines.length) return;
+    final selection = ++_selectionGeneration;
     final line = _playableLines[index];
     final (ei, prog) = await _loadResumeForLine(line, lineIndex: index);
     final isFavorited = await ref
         .read(favoritesRepositoryProvider)
         .checkFavorite(
             vodId: line.detail.vodId, sourceKey: line.detail.sourceKey);
-    if (!mounted) return;
+    if (!mounted || selection != _selectionGeneration) return;
 
     _restoringInitialHistory = true;
     try {
@@ -729,6 +1049,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       await _loadInlineEpisode(
         episodeIndex: ei,
         startAtSeconds: prog,
+        play: true,
       );
     } finally {
       _restoringInitialHistory = false;
@@ -757,15 +1078,20 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         item.sourceKey != line.detail.sourceKey) {
       return false;
     }
+    if (!strict) return true;
+    if (item.playbackLineName?.isNotEmpty == true) {
+      return item.playbackLineName == line.rawName;
+    }
     final sourceName = item.sourceName?.trim();
     if (sourceName != null && sourceName.isNotEmpty) {
-      return _normalizeLineName(sourceName) ==
-          _normalizeLineName(line.source.name);
+      if (_normalizeLineName(sourceName) ==
+              _normalizeLineName(line.source.name) ||
+          _normalizeLineName(sourceName) == _normalizeLineName(line.rawName))
+        return true;
+      if (sourceName.split(' · ').last == line.rawName) return true;
     }
-    if (item.sourceIndex != null && item.sourceIndex == lineIndex) {
-      return true;
-    }
-    return !strict && !_historyHasLineHint(item);
+    // Legacy sourceIndex is a global search-result index, not a stable line ID.
+    return !_historyHasLineHint(item);
   }
 
   bool _historyHasLineHint(WatchHistoryItem item) {
@@ -797,14 +1123,19 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         index >= _playableLines.length) {
       return;
     }
+    final selection = ++_selectionGeneration;
+    _episodeGeneration++;
     await _persistProgress();
+    if (!mounted || selection != _selectionGeneration) return;
+    _initialHistoryApplied = true;
+    if (_castDevice != null) await _stopCasting(resumeLocally: false);
     final line = _playableLines[index];
     final (ei, prog) = await _loadResumeForLine(line, lineIndex: index);
     final isFavorited = await ref
         .read(favoritesRepositoryProvider)
         .checkFavorite(
             vodId: line.detail.vodId, sourceKey: line.detail.sourceKey);
-    if (!mounted) {
+    if (!mounted || selection != _selectionGeneration) {
       return;
     }
     setState(() {
@@ -973,6 +1304,8 @@ class _DetailPageState extends ConsumerState<DetailPage> {
 
   void _handleInlinePlayingChanged(bool playing) {
     if (!mounted) return;
+    if (Platform.isAndroid)
+      unawaited(AndroidMedia.setPlaying(playing).catchError((Object _) {}));
     if (playing) {
       _startControlsHideTimer();
       return;
@@ -1066,6 +1399,13 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _toggleInlinePlayPause() async {
+    final device = _castDevice;
+    if (device != null) {
+      await _castController!.command(device, _castPlaying ? 'Pause' : 'Play',
+          _castPlaying ? const {} : const {'Speed': '1'});
+      if (mounted) setState(() => _castPlaying = !_castPlaying);
+      return;
+    }
     if (_inlinePlayer.state.playing) {
       await _inlinePlayer.pause();
       return;
@@ -1075,6 +1415,18 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _seekInline(Duration position) async {
+    final device = _castDevice;
+    if (device != null) {
+      final target = Duration(
+          milliseconds: position.inMilliseconds.clamp(
+              0,
+              _castDuration > Duration.zero
+                  ? _castDuration.inMilliseconds
+                  : 1 << 53));
+      await _castController!.seek(device, target);
+      if (mounted) setState(() => _castPosition = target);
+      return;
+    }
     final duration = _inlinePlayer.state.duration;
     final target = duration == Duration.zero
         ? position
@@ -1344,11 +1696,39 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _selectInlineEpisode(int index) async {
+    final selection = ++_selectionGeneration;
+    _episodeGeneration++;
     await _persistProgress();
+    if (!mounted || selection != _selectionGeneration) return;
+    _initialHistoryApplied = true;
     await _loadInlineEpisode(episodeIndex: index, play: true);
   }
 
   Future<void> _loadInlineEpisode({
+    required int episodeIndex,
+    bool play = false,
+    double startAtSeconds = 0,
+    bool restart = false,
+  }) {
+    final generation = ++_episodeGeneration;
+    final task = _episodeQueue.then((_) async {
+      if (!mounted || _disposing || generation != _episodeGeneration) return;
+      if (_castDevice != null) await _stopCasting(resumeLocally: false);
+      if (!mounted || generation != _episodeGeneration) return;
+      await _performLoadInlineEpisode(
+          generation: generation,
+          episodeIndex: episodeIndex,
+          play: play,
+          startAtSeconds: startAtSeconds,
+          restart: restart);
+    });
+    _episodeQueue = task.catchError((Object _) {});
+    return task;
+  }
+
+  Future<void> _performLoadInlineEpisode({
+    required int generation,
+    bool restart = false,
     required int episodeIndex,
     bool play = false,
     double startAtSeconds = 0,
@@ -1361,10 +1741,14 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     final episode = line.source.episodes[clampedIndex];
     final signature =
         '${line.detail.sourceKey}/${line.detail.vodId}/$clampedIndex/${episode.effectiveUrl}';
-    if (_inlineSignature == signature && _inlineInitialized) {
-      if (startAtSeconds > 0) {
-        await _seekInline(Duration(seconds: startAtSeconds.round()));
-      }
+    if (!restart &&
+        _inlineSignature == signature &&
+        _inlineInitialized &&
+        (startAtSeconds <= 0 ||
+            (_inlinePlayer.state.position.inMilliseconds / 1000 -
+                        startAtSeconds)
+                    .abs() <
+                2)) {
       if (play) {
         await _inlinePlayer.play();
       }
@@ -1383,30 +1767,26 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     });
 
     try {
-      await _inlinePlayer.open(
-        Media(
-          episode.effectiveUrl,
-          httpHeaders: episode.httpHeaders,
-        ),
+      await openPlayback(
+        player: _inlinePlayer,
+        media: Media(episode.effectiveUrl, httpHeaders: episode.httpHeaders),
         play: play,
+        start: Duration(milliseconds: (startAtSeconds * 1000).round()),
+        isCurrent: () =>
+            mounted && !_disposing && generation == _episodeGeneration,
       );
+      if (!mounted || _disposing || generation != _episodeGeneration) return;
       await _inlinePlayer.setRate(_playbackSpeed);
       await _inlinePlayer.setVolume(_volume);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || generation != _episodeGeneration) return;
       setState(() {
         _inlineInitialized = true;
         _inlineLoading = false;
         _inlineSignature = signature;
       });
-      if (startAtSeconds > 0) {
-        await _seekInline(Duration(seconds: startAtSeconds.round()));
-      }
-      unawaited(_persistProgress(force: true));
       _startControlsHideTimer();
     } catch (error) {
-      if (!mounted) {
+      if (!mounted || generation != _episodeGeneration) {
         return;
       }
       setState(() {
@@ -1418,7 +1798,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _persistProgress({bool force = false}) async {
-    if (_restoringInitialHistory) {
+    if (_restoringInitialHistory || _inlineLoading || _isSeeking) {
       return;
     }
     final line = _selectedLine;
@@ -1426,11 +1806,20 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     if (line == null || episode == null || !_inlineInitialized) {
       return;
     }
+    if (_inlineSignature !=
+        '${line.detail.sourceKey}/${line.detail.vodId}/$_selectedEpisodeIndex/${episode.effectiveUrl}')
+      return;
     if (!_autoSavePlaybackProgress) {
       return;
     }
-    final positionSeconds = _inlinePlayer.state.position.inSeconds.toDouble();
-    final durationSeconds = _inlinePlayer.state.duration.inSeconds.toDouble();
+    final positionSeconds =
+        (_castDevice == null ? _inlinePlayer.state.position : _castPosition)
+            .inSeconds
+            .toDouble();
+    final durationSeconds =
+        (_castDevice == null ? _inlinePlayer.state.duration : _castDuration)
+            .inSeconds
+            .toDouble();
     if (!force && positionSeconds < 1) {
       return;
     }
@@ -1450,6 +1839,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         vodName: _infoDetail.vodName,
         vodPic: _infoDetail.vodPic ?? line.detail.vodPic,
         sourceName: line.source.name,
+        playbackLineName: line.rawName,
         year: _infoDetail.vodYear ?? line.detail.vodYear,
         totalEpisodes: line.source.episodes.length,
         totalTime: durationSeconds > 0 ? durationSeconds : null,
@@ -1615,13 +2005,19 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Future<void> _openPlayer(int si, int ei, double prog) async {
+    if (_castDevice != null) {
+      await _showCastControls();
+      return;
+    }
     final source = _currentSource;
     if (source == null || source.episodes.isEmpty) return;
     final targetEpisode = ei.clamp(0, source.episodes.length - 1);
-    await _loadInlineEpisode(episodeIndex: targetEpisode, play: true);
-    if (prog > 0) {
-      await _seekInline(Duration(seconds: prog.round()));
-    }
+    await _loadInlineEpisode(
+        episodeIndex: targetEpisode,
+        play: true,
+        startAtSeconds: prog,
+        restart: prog == 0);
+    if (!mounted || !_inlineInitialized) return;
     await _enterExpandedPlayer();
   }
 
@@ -1631,6 +2027,14 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     int? sourceIndex,
     int? episodeIndex,
   }) {
+    if (name != null && name.isNotEmpty) {
+      for (var si = 0; si < result.sources.length; si++) {
+        final eps = result.sources[si].episodes;
+        for (var ei = 0; ei < eps.length; ei++) {
+          if (eps[ei].name.trim() == name.trim()) return (si, ei);
+        }
+      }
+    }
     if (sourceIndex != null &&
         episodeIndex != null &&
         sourceIndex >= 0 &&
@@ -1639,18 +2043,21 @@ class _DetailPageState extends ConsumerState<DetailPage> {
         episodeIndex < result.sources[sourceIndex].episodes.length) {
       return (sourceIndex, episodeIndex);
     }
-    if (name == null || name.isEmpty) return (0, 0);
-    for (var si = 0; si < result.sources.length; si++) {
-      final eps = result.sources[si].episodes;
-      for (var ei = 0; ei < eps.length; ei++) {
-        if (eps[ei].name == name) return (si, ei);
-      }
-    }
     return (0, 0);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_inPip || _pipPreparing) {
+      return Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox.expand(
+              child: Video(
+                  controller: _inlineVideoController,
+                  controls: NoVideoControls,
+                  fit: BoxFit.contain,
+                  pauseUponEnteringBackgroundMode: false)));
+    }
     final cs = Theme.of(context).colorScheme;
 
     if (_loading) {
@@ -1753,7 +2160,7 @@ class _DetailPageState extends ConsumerState<DetailPage> {
       slivers: [
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.only(bottom: 12),
             child: _buildPlayerFrame(context, fill: false),
           ),
         ),
@@ -1836,12 +2243,11 @@ class _DetailPageState extends ConsumerState<DetailPage> {
 
   Widget _buildPlayerFrame(BuildContext context, {required bool fill}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(fill ? 8 : 0),
       child: SizedBox(
         width: double.infinity,
-        height: fill
-            ? double.infinity
-            : (MediaQuery.of(context).size.width - 32) * 9 / 16,
+        height:
+            fill ? double.infinity : MediaQuery.of(context).size.width * 9 / 16,
         child: _buildPlayerStage(compact: !fill, expanded: false),
       ),
     );
@@ -1861,6 +2267,22 @@ class _DetailPageState extends ConsumerState<DetailPage> {
     required bool compact,
     required bool expanded,
   }) {
+    if (_castDevice != null) {
+      return ColoredBox(
+          color: Colors.black,
+          child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.cast_connected_rounded,
+                color: Colors.white, size: 32),
+            const SizedBox(height: 8),
+            Text('正在投屏到 ${_castDevice!.name}',
+                style: const TextStyle(color: Colors.white)),
+            Text(
+                '${formatDuration(_castPosition)} / ${formatDuration(_castDuration)}',
+                style: const TextStyle(color: Colors.white70)),
+            TextButton(onPressed: _showCastControls, child: const Text('投屏控制')),
+          ])));
+    }
     final episode = _currentEpisode;
     final source = _currentSource;
     final showLoading = _inlineError == null &&
@@ -1903,9 +2325,13 @@ class _DetailPageState extends ConsumerState<DetailPage> {
               showLoadingIndicator: showLoading,
               loadingLabel: loadingLabel,
               errorText: _inlineError,
+              pauseOnBackground: false,
               onRetry: () => _loadInlineEpisode(
                 episodeIndex: _selectedEpisodeIndex,
                 play: true,
+                startAtSeconds: _selectedEpisodeIndex == _resumeEpisodeIndex
+                    ? _resumeProgress
+                    : 0,
               ),
             ),
           _buildCenterPauseIndicator(),
@@ -1965,6 +2391,12 @@ class _DetailPageState extends ConsumerState<DetailPage> {
                 topActionIcon: topActionIcon,
                 topActionTooltip: topActionTooltip,
                 onTopAction: onTopAction,
+                onPictureInPicture: _pipSupported && _inlineInitialized
+                    ? () => unawaited(_enterPip())
+                    : null,
+                onCast: _inlineInitialized && !_castBusy
+                    ? () => unawaited(_openCast())
+                    : null,
                 onBackPressed: () {
                   if (_traditionalFullscreen) {
                     unawaited(_exitTraditionalFullscreen());
@@ -2144,14 +2576,22 @@ class _DetailPageState extends ConsumerState<DetailPage> {
   }
 
   Widget _buildActionBlock(BuildContext context) {
-    return _DetailActionRow(
-      hasPlay: _selectedPlayResult != null,
-      hasResume: _resumeProgress > 0,
-      sourceEnabled: _selectedLine != null && _sourceEnabled,
-      sourceToggleLoading: _sourceToggleLoading,
-      onPlay: () => _openPlayer(0, _resumeEpisodeIndex, _resumeProgress),
-      onPlayFromStart: () => _openPlayer(0, 0, 0),
-      onDisableSource: _disableCurrentSource,
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: isDesktopPlatform ? 0 : 16),
+      child: _DetailActionRow(
+        hasPlay: _selectedPlayResult != null,
+        hasResume: _resumeProgress > 0,
+        sourceEnabled: _selectedLine != null && _sourceEnabled,
+        sourceToggleLoading: _sourceToggleLoading,
+        onPlay: () => _openPlayer(
+            0,
+            _selectedEpisodeIndex,
+            _inlineInitialized
+                ? _inlinePlayer.state.position.inMilliseconds / 1000
+                : _resumeProgress),
+        onPlayFromStart: () => _openPlayer(0, 0, 0),
+        onDisableSource: _disableCurrentSource,
+      ),
     );
   }
 
@@ -2280,8 +2720,10 @@ class _PlayableLine {
     required this.detail,
     required this.source,
     required this.site,
+    required this.rawName,
   });
 
+  final String rawName;
   final VodItem detail;
   final PlaySource source;
   final SiteWithStatus? site;
@@ -2670,9 +3112,12 @@ class _DetailActionRow extends StatelessWidget {
     if (hasPlay) {
       if (hasResume) {
         children.add(
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(
+              SizedBox(
+                width: 180,
                 child: FilledButton.icon(
                   onPressed: onPlay,
                   icon: const Icon(Icons.play_arrow_rounded),
@@ -2691,7 +3136,7 @@ class _DetailActionRow extends StatelessWidget {
       } else {
         children.add(
           SizedBox(
-            width: double.infinity,
+            width: 180,
             child: FilledButton.icon(
               onPressed: onPlay,
               icon: const Icon(Icons.play_arrow_rounded),

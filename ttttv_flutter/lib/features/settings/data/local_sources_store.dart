@@ -63,11 +63,28 @@ class LocalSourcesStore implements SourcesRepository {
       throw StateError('未找到可检查的片源');
     }
 
-    final checked = await Future.wait(targets.map(_runHealthCheck));
+    final checked = <LocalVodSource>[];
+    var next = 0;
+    Future<void> worker() async {
+      while (next < targets.length) {
+        final target = targets[next++];
+        checked.add(await _runHealthCheck(target));
+      }
+    }
+
+    await Future.wait(
+        List.generate(targets.length.clamp(0, 6), (_) => worker()));
     final checkedByKey = {for (final source in checked) source.key: source};
-    final merged = sources
-        .map((source) => checkedByKey[source.key] ?? source)
-        .toList(growable: false);
+    // Do not restore deleted sources or undo toggles made while probes ran.
+    final latest = await loadAllSources();
+    final merged = latest.map((source) {
+      final result = checkedByKey[source.key];
+      if (result == null || result.apiUrl != source.apiUrl) return source;
+      return source.withHealth(
+          elapsedMs: result.responseTimeMs ?? 0,
+          status: result.healthStatus ?? 'unhealthy',
+          message: result.statusMessage);
+    }).toList(growable: false);
     await _saveSources(merged);
 
     return merged
@@ -468,8 +485,7 @@ class LocalVodSource {
   bool get isBadHealth =>
       healthStatus == 'degraded' || healthStatus == 'unhealthy';
 
-  bool get hasCustomDetail =>
-      detailUrl.isNotEmpty && detailUrl != apiUrl;
+  bool get hasCustomDetail => detailUrl.isNotEmpty && detailUrl != apiUrl;
 
   factory LocalVodSource.fromJsonMap(String key, Map<String, dynamic> json) {
     return LocalVodSource(

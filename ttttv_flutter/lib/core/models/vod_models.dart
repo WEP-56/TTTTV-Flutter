@@ -202,6 +202,7 @@ class WatchHistoryItem {
     required this.progress,
     this.vodPic,
     this.sourceName,
+    this.playbackLineName,
     this.year,
     this.totalEpisodes,
     this.totalTime,
@@ -216,6 +217,7 @@ class WatchHistoryItem {
   final String vodName;
   final String? vodPic;
   final String? sourceName;
+  final String? playbackLineName;
   final String? year;
   final int? totalEpisodes;
   final double? totalTime;
@@ -234,6 +236,7 @@ class WatchHistoryItem {
       vodName: _readString(map['vod_name']) ?? '',
       vodPic: _readString(map['vod_pic']) ?? _readString(map['cover']),
       sourceName: _readString(map['source_name']),
+      playbackLineName: _readString(map['playback_line_name']),
       year: _readString(map['year']),
       totalEpisodes: _readInt(map['total_episodes']),
       totalTime: _readDouble(map['total_time']),
@@ -261,6 +264,7 @@ class WatchHistoryUpsert {
     required this.progress,
     this.vodPic,
     this.sourceName,
+    this.playbackLineName,
     this.year,
     this.totalEpisodes,
     this.totalTime,
@@ -276,6 +280,7 @@ class WatchHistoryUpsert {
   final double progress;
   final String? vodPic;
   final String? sourceName;
+  final String? playbackLineName;
   final String? year;
   final int? totalEpisodes;
   final double? totalTime;
@@ -291,6 +296,7 @@ class WatchHistoryUpsert {
       'vod_name': vodName,
       'vod_pic': vodPic,
       'source_name': sourceName,
+      'playback_line_name': playbackLineName,
       'year': year,
       'total_episodes': totalEpisodes,
       'total_time': totalTime,

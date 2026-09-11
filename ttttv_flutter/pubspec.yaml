@@ -1,7 +1,7 @@
 name: ttttv_flutter
 description: Flutter client for TTTTV.
 publish_to: none
-version: 1.2.5+3
+version: 1.2.8+4
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -13,6 +13,7 @@ dependencies:
   brotli: ^0.6.0
   crypto: ^3.0.6
   dio: ^5.8.0+1
+  xml: ^6.6.1
   file_picker: ^10.3.2
   flutter_riverpod: ^2.6.1
   path_provider: ^2.1.5

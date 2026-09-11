@@ -6,10 +6,24 @@ import '../../../core/models/vod_models.dart';
 import '../domain/history_repository.dart';
 
 class LocalHistoryRepository implements HistoryRepository {
+  LocalHistoryRepository({this.onChanged});
+  final void Function()? onChanged;
   static const _historyKey = 'vod_local_history_v1';
+  static Future<void> _writes = Future<void>.value();
+
+  Future<void> _serialize(Future<void> Function() action) {
+    final task = _writes.then((_) => action());
+    _writes = task.catchError((Object _) {});
+    return task;
+  }
 
   @override
   Future<List<WatchHistoryItem>> fetchHistory() async {
+    await _writes;
+    return _readHistory();
+  }
+
+  Future<List<WatchHistoryItem>> _readHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_historyKey);
     if (raw == null || raw.isEmpty) {
@@ -32,36 +46,39 @@ class LocalHistoryRepository implements HistoryRepository {
   }
 
   @override
-  Future<void> addHistory(WatchHistoryUpsert request) async {
-    final prefs = await SharedPreferences.getInstance();
-    final history = await fetchHistory();
-    final next = history.where((item) => !_isSameEntry(item, request)).toList();
+  Future<void> addHistory(WatchHistoryUpsert request) => _serialize(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final history = await _readHistory();
+        final next =
+            history.where((item) => !_isSameEntry(item, request)).toList();
 
-    next.insert(
-      0,
-      WatchHistoryItem(
-        vodId: request.vodId,
-        sourceKey: request.sourceKey,
-        vodName: request.vodName,
-        vodPic: request.vodPic,
-        sourceName: request.sourceName,
-        year: request.year,
-        totalEpisodes: request.totalEpisodes,
-        totalTime: request.totalTime,
-        searchTitle: request.searchTitle,
-        lastPlayTime: DateTime.now().millisecondsSinceEpoch,
-        progress: request.progress,
-        episode: request.episode,
-        sourceIndex: request.sourceIndex,
-        episodeIndex: request.episodeIndex,
-      ),
-    );
+        next.insert(
+          0,
+          WatchHistoryItem(
+            vodId: request.vodId,
+            sourceKey: request.sourceKey,
+            vodName: request.vodName,
+            vodPic: request.vodPic,
+            sourceName: request.sourceName,
+            playbackLineName: request.playbackLineName,
+            year: request.year,
+            totalEpisodes: request.totalEpisodes,
+            totalTime: request.totalTime,
+            searchTitle: request.searchTitle,
+            lastPlayTime: DateTime.now().millisecondsSinceEpoch,
+            progress: request.progress,
+            episode: request.episode,
+            sourceIndex: request.sourceIndex,
+            episodeIndex: request.episodeIndex,
+          ),
+        );
 
-    await prefs.setString(
-      _historyKey,
-      jsonEncode(next.take(500).map(_historyToJson).toList()),
-    );
-  }
+        await prefs.setString(
+          _historyKey,
+          jsonEncode(next.take(500).map(_historyToJson).toList()),
+        );
+        onChanged?.call();
+      });
 
   @override
   Future<void> deleteHistory({
@@ -70,32 +87,35 @@ class LocalHistoryRepository implements HistoryRepository {
     int? sourceIndex,
     int? episodeIndex,
     String? episode,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final history = await fetchHistory();
-    final next = history
-        .where(
-          (item) => !(item.vodId == vodId &&
-              item.sourceKey == sourceKey &&
-              _matchesEpisode(
-                item,
-                sourceIndex: sourceIndex,
-                episodeIndex: episodeIndex,
-                episode: episode,
-              )),
-        )
-        .toList();
-    await prefs.setString(
-      _historyKey,
-      jsonEncode(next.map(_historyToJson).toList()),
-    );
-  }
+  }) =>
+      _serialize(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final history = await _readHistory();
+        final next = history
+            .where(
+              (item) => !(item.vodId == vodId &&
+                  item.sourceKey == sourceKey &&
+                  _matchesEpisode(
+                    item,
+                    sourceIndex: sourceIndex,
+                    episodeIndex: episodeIndex,
+                    episode: episode,
+                  )),
+            )
+            .toList();
+        await prefs.setString(
+          _historyKey,
+          jsonEncode(next.map(_historyToJson).toList()),
+        );
+        onChanged?.call();
+      });
 
   @override
-  Future<void> clearHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_historyKey);
-  }
+  Future<void> clearHistory() => _serialize(() async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_historyKey);
+        onChanged?.call();
+      });
 
   Map<String, dynamic> _historyToJson(WatchHistoryItem item) {
     return {
@@ -104,6 +124,7 @@ class LocalHistoryRepository implements HistoryRepository {
       'vod_name': item.vodName,
       'vod_pic': item.vodPic,
       'source_name': item.sourceName,
+      'playback_line_name': item.playbackLineName,
       'year': item.year,
       'total_episodes': item.totalEpisodes,
       'total_time': item.totalTime,

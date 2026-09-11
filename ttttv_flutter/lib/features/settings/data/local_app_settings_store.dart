@@ -17,6 +17,8 @@ class LocalAppSettingsStore {
   Future<AppSettings> load() async {
     final preferences = await SharedPreferences.getInstance();
     return AppSettings(
+      autoCheckSources:
+          preferences.getBool('app_settings_auto_check_sources') ?? false,
       autoSavePlaybackProgress:
           preferences.getBool(_autoSavePlaybackProgressKey) ?? true,
       defaultVideoFit: _videoFitPreferenceFromStorage(
@@ -37,6 +39,8 @@ class LocalAppSettingsStore {
 
   Future<void> save(AppSettings settings) async {
     final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(
+        'app_settings_auto_check_sources', settings.autoCheckSources);
     await preferences.setBool(
       _autoSavePlaybackProgressKey,
       settings.autoSavePlaybackProgress,
@@ -75,7 +79,6 @@ VideoFitPreference _videoFitPreferenceFromStorage(String? value) {
       return VideoFitPreference.original;
   }
 }
-
 
 DoubanDataSource _doubanDataSourceFromStorage(String? value) {
   switch (value) {

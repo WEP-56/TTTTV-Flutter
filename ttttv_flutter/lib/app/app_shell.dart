@@ -9,12 +9,10 @@ import '../features/home/presentation/home_page.dart';
 import '../features/my/presentation/my_page.dart';
 import '../features/search/presentation/search_page.dart';
 import '../features/settings/presentation/settings_page.dart';
-import '../features/sources/presentation/sources_page.dart';
 
 enum _Section {
   home('首页', Icons.home_rounded, Icons.home_outlined),
   search('搜索', Icons.search_rounded, Icons.search_rounded),
-  sources('片源', Icons.dns_rounded, Icons.dns_outlined),
   my('我的', Icons.person_rounded, Icons.person_outline_rounded),
   settings('设置', Icons.settings_rounded, Icons.settings_outlined);
 
@@ -40,7 +38,6 @@ class _AppShellState extends ConsumerState<AppShell>
   static const _pages = <Widget>[
     HomePage(),
     SearchPage(),
-    SourcesPage(),
     MyPage(),
     SettingsPage(),
   ];
@@ -75,6 +72,10 @@ class _AppShellState extends ConsumerState<AppShell>
 
     final settings = await ref.read(appSettingsStoreProvider).load();
 
+    if (settings.autoCheckSources) {
+      unawaited(_checkSourcesOnStartup());
+    }
+
     if (settings.autoClearCacheThresholdBytes case final threshold?) {
       final storageManager = ref.read(storageManagerProvider);
       final usage = await storageManager.getCacheUsage();
@@ -97,6 +98,20 @@ class _AppShellState extends ConsumerState<AppShell>
 
     _exitMaintenanceTriggered = true;
     await ref.read(storageManagerProvider).clearCache();
+  }
+
+  Future<void> _checkSourcesOnStartup() async {
+    final repository = ref.read(sourcesRepositoryProvider);
+    try {
+      await repository.checkSites();
+      if (!mounted) return;
+      final settings = await ref.read(appSettingsStoreProvider).load();
+      if (!mounted) return;
+      if (settings.autoCheckSources) await repository.disableBadSites();
+      if (mounted) ref.invalidate(siteListProvider);
+    } catch (_) {
+      // 启动维护失败不阻止正常使用，可在片源管理中手动重试。
+    }
   }
 
   @override
@@ -197,8 +212,9 @@ class _SideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final mainSections =
-        _Section.values.where((section) => section != _Section.settings).toList();
+    final mainSections = _Section.values
+        .where((section) => section != _Section.settings)
+        .toList();
     final selectedIndex =
         current == _Section.settings ? null : mainSections.indexOf(current);
 

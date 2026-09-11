@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $flutterDir = Join-Path $repoRoot 'ttttv_flutter'
 $pubspecPath = Join-Path $flutterDir 'pubspec.yaml'
-$apkPath = Join-Path $flutterDir 'build\app\outputs\flutter-apk\app-release.apk'
+$apkOutputDir = Join-Path $flutterDir 'build\app\outputs\flutter-apk'
 $outputDir = Join-Path $repoRoot 'build\installers'
 
 function Get-AppVersion {
@@ -30,27 +30,41 @@ if (-not (Test-Path $flutterDir)) {
 
 $version = Get-AppVersion
 $safeVersion = ($version -replace '[^0-9A-Za-z\.\-_+]+', '_')
-$versionedApkPath = Join-Path $outputDir "TTTTV-Android-$safeVersion.apk"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
-Write-Host 'Building Android release APK with Flutter...' -ForegroundColor Green
+Write-Host 'Building Android release APKs with Flutter...' -ForegroundColor Green
 Push-Location $flutterDir
 try {
-    flutter build apk --release
+    flutter build apk --release --split-per-abi
 }
 finally {
     Pop-Location
 }
 
-if (-not (Test-Path $apkPath)) {
-    throw "Release APK not found: $apkPath"
+$apkFiles = @(
+    @{ Abi = 'arm64-v8a'; Source = Join-Path $apkOutputDir 'app-arm64-v8a-release.apk' },
+    @{ Abi = 'armeabi-v7a'; Source = Join-Path $apkOutputDir 'app-armeabi-v7a-release.apk' },
+    @{ Abi = 'x86_64'; Source = Join-Path $apkOutputDir 'app-x86_64-release.apk' }
+)
+
+$copiedApks = @()
+foreach ($apk in $apkFiles) {
+    if (-not (Test-Path $apk.Source)) {
+        throw "Release APK not found: $($apk.Source)"
+    }
+
+    $destination = Join-Path $outputDir "TTTTV-Android-$safeVersion-$($apk.Abi).apk"
+    Copy-Item $apk.Source $destination -Force
+    $copiedApks += $destination
 }
 
-Copy-Item $apkPath $versionedApkPath -Force
-
 Write-Host ''
-Write-Host 'Android APK build complete.' -ForegroundColor Cyan
-Write-Host 'APK output:' -ForegroundColor Cyan
-Write-Host "  $apkPath"
-Write-Host "  $versionedApkPath"
+Write-Host 'Android split APK build complete.' -ForegroundColor Cyan
+Write-Host 'APK outputs:' -ForegroundColor Cyan
+foreach ($apk in $apkFiles) {
+    Write-Host "  $($apk.Source)"
+}
+foreach ($path in $copiedApks) {
+    Write-Host "  $path"
+}

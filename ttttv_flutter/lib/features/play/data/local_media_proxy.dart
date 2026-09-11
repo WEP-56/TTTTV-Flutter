@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
@@ -15,6 +16,33 @@ import 'package:crypto/crypto.dart';
 /// - 客户端断开（拖进度条、关播放器）时，主动中止上游请求
 class LocalMediaProxy {
   LocalMediaProxy._();
+
+  /// A separate, short-lived LAN listener; the ordinary player stays loopback-only.
+  LocalMediaProxy.forCasting(String host)
+      : _advertisedHost = host,
+        _accessToken = List.generate(24, (_) => Random.secure().nextInt(256))
+            .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+            .join();
+
+  String _advertisedHost = '127.0.0.1';
+  String? _accessToken;
+
+  Future<String> createCastUrl(String url, Map<String, String> headers) async {
+    final server = await _ensureStarted();
+    return _buildProxyUri(server,
+            path: _isLikelyHls(url) ? '/proxy/m3u8' : '/proxy/segment',
+            url: url,
+            headers: headers)
+        .toString();
+  }
+
+  Future<void> close() async {
+    await _server?.close(force: true);
+    _server = null;
+    _sharedClient?.close(force: true);
+    _sharedClient = null;
+    _playlistCache.clear();
+  }
 
   static final LocalMediaProxy instance = LocalMediaProxy._();
 
@@ -69,7 +97,9 @@ class LocalMediaProxy {
     () async {
       try {
         final server = await HttpServer.bind(
-          InternetAddress.loopbackIPv4,
+          _accessToken == null
+              ? InternetAddress.loopbackIPv4
+              : InternetAddress.anyIPv4,
           0,
           shared: true,
         );
@@ -100,6 +130,12 @@ class LocalMediaProxy {
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
+    if (_accessToken != null &&
+        request.uri.queryParameters['token'] != _accessToken) {
+      request.response.statusCode = HttpStatus.forbidden;
+      await request.response.close();
+      return;
+    }
     final upstreamUrl = request.uri.queryParameters['url'];
     if (upstreamUrl == null || upstreamUrl.trim().isEmpty) {
       request.response.statusCode = HttpStatus.badRequest;
@@ -109,6 +145,11 @@ class LocalMediaProxy {
 
     final headers = _decodeHeaders(request.uri.queryParameters['headers']);
     final uri = Uri.parse(upstreamUrl);
+    if (uri.scheme != 'http' && uri.scheme != 'https') {
+      request.response.statusCode = HttpStatus.badRequest;
+      await request.response.close();
+      return;
+    }
 
     switch (request.uri.path) {
       case '/proxy/m3u8':
@@ -181,8 +222,7 @@ class LocalMediaProxy {
       charset: 'utf-8',
     );
     // playlist 体积小，禁用任何中间缓存，避免 mediakit 复用过期 playlist
-    response.headers
-        .set(HttpHeaders.cacheControlHeader, 'no-store, max-age=0');
+    response.headers.set(HttpHeaders.cacheControlHeader, 'no-store, max-age=0');
     response.write(content);
   }
 
@@ -203,8 +243,7 @@ class LocalMediaProxy {
   void _cachePlaylist(String key, String content) {
     if (_playlistCache.length >= _maxCachedPlaylists) {
       final oldest = _playlistCache.entries.reduce(
-        (a, b) =>
-            a.value.expiresAt.isBefore(b.value.expiresAt) ? a : b,
+        (a, b) => a.value.expiresAt.isBefore(b.value.expiresAt) ? a : b,
       );
       _playlistCache.remove(oldest.key);
     }
@@ -245,8 +284,7 @@ class LocalMediaProxy {
       request.response.headers
           .set(HttpHeaders.acceptRangesHeader, acceptRanges);
     }
-    final contentRange =
-        upstream.headers.value(HttpHeaders.contentRangeHeader);
+    final contentRange = upstream.headers.value(HttpHeaders.contentRangeHeader);
     if (contentRange != null) {
       request.response.headers
           .set(HttpHeaders.contentRangeHeader, contentRange);
@@ -277,6 +315,7 @@ class LocalMediaProxy {
       request.response.done.catchError((Object _) {
         // 客户端断开时取消订阅，HttpClient 会自动释放连接
         subscription?.cancel();
+        if (!completer.isCompleted) completer.complete();
       }),
     );
 
@@ -298,7 +337,8 @@ class LocalMediaProxy {
   }) async {
     final HttpClientRequest upstream;
     try {
-      upstream = await _httpClient.getUrl(uri);
+      upstream = await _httpClient.openUrl(
+          request.method == 'HEAD' ? 'HEAD' : 'GET', uri);
     } catch (error) {
       request.response.statusCode = HttpStatus.badGateway;
       await request.response.close();
@@ -356,7 +396,8 @@ class LocalMediaProxy {
         continue;
       }
 
-      if (trimmed.startsWith('#EXT-X-KEY')) {
+      if (trimmed.startsWith('#EXT-X-KEY') ||
+          trimmed.startsWith('#EXT-X-SESSION-KEY')) {
         rewritten.add(
           _rewriteDirectiveUri(
             line,
@@ -385,7 +426,16 @@ class LocalMediaProxy {
       }
 
       if (trimmed.startsWith('#')) {
-        rewritten.add(line);
+        rewritten.add(line.contains('URI="')
+            ? _rewriteDirectiveUri(
+                line,
+                attributeName: 'URI',
+                baseUri: baseUri,
+                serverPort: serverPort,
+                path: '/proxy/m3u8',
+                headers: headers,
+              )
+            : line);
         continue;
       }
 
@@ -445,10 +495,11 @@ class LocalMediaProxy {
     final effectivePort = server?.port ?? port ?? 0;
     return Uri(
       scheme: 'http',
-      host: InternetAddress.loopbackIPv4.address,
+      host: _advertisedHost,
       port: effectivePort,
       path: path,
       queryParameters: {
+        if (_accessToken != null) 'token': _accessToken!,
         'url': url,
         'headers': base64UrlEncode(utf8.encode(jsonEncode(headers))),
       },

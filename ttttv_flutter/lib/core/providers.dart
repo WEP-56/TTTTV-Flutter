@@ -64,8 +64,18 @@ final playRepositoryProvider = Provider<PlayRepository>((ref) {
   return const NativePlayRepository();
 });
 
-final historyRepositoryProvider = Provider<HistoryRepository>((ref) {
-  return LocalHistoryRepository();
+// Shared notification state has no dependency on the repository or list.
+// The repository must never invalidate a provider that depends on itself.
+final _historyRevisionProvider = StateProvider<int>((ref) => 0);
+
+final Provider<HistoryRepository> historyRepositoryProvider =
+    Provider<HistoryRepository>((ref) {
+  final revision = ref.read(_historyRevisionProvider.notifier);
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
+  return LocalHistoryRepository(onChanged: () {
+    if (!disposed) revision.state++;
+  });
 });
 
 final favoritesRepositoryProvider = Provider<FavoritesRepository>((ref) {
@@ -96,8 +106,9 @@ final searchControllerProvider =
   );
 });
 
-final historyItemsProvider =
+final FutureProvider<List<WatchHistoryItem>> historyItemsProvider =
     FutureProvider<List<WatchHistoryItem>>((ref) async {
+  ref.watch(_historyRevisionProvider);
   final repository = ref.watch(historyRepositoryProvider);
   return repository.fetchHistory();
 });

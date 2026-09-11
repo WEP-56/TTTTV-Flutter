@@ -23,6 +23,7 @@ enum CacheAutoClearThreshold {
 
 class AppSettings {
   const AppSettings({
+    this.autoCheckSources = false,
     this.autoSavePlaybackProgress = true,
     this.defaultVideoFit = VideoFitPreference.original,
     this.keepScreenAwakeDuringPlayback = false,
@@ -32,6 +33,7 @@ class AppSettings {
   });
 
   final bool autoSavePlaybackProgress;
+  final bool autoCheckSources;
   final VideoFitPreference defaultVideoFit;
   final bool keepScreenAwakeDuringPlayback;
   final DoubanDataSource doubanDataSource;
@@ -46,6 +48,7 @@ class AppSettings {
       };
 
   AppSettings copyWith({
+    bool? autoCheckSources,
     bool? autoSavePlaybackProgress,
     VideoFitPreference? defaultVideoFit,
     bool? keepScreenAwakeDuringPlayback,
@@ -54,6 +57,7 @@ class AppSettings {
     CacheAutoClearThreshold? autoClearCacheThreshold,
   }) {
     return AppSettings(
+      autoCheckSources: autoCheckSources ?? this.autoCheckSources,
       autoSavePlaybackProgress:
           autoSavePlaybackProgress ?? this.autoSavePlaybackProgress,
       defaultVideoFit: defaultVideoFit ?? this.defaultVideoFit,

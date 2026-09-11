@@ -10,6 +10,7 @@ class PlayerVideoSurface extends StatelessWidget {
     required this.loadingLabel,
     this.errorText,
     this.onRetry,
+    this.pauseOnBackground = true,
     super.key,
   });
 
@@ -20,6 +21,7 @@ class PlayerVideoSurface extends StatelessWidget {
   final String loadingLabel;
   final String? errorText;
   final VoidCallback? onRetry;
+  final bool pauseOnBackground;
 
   @override
   Widget build(BuildContext context) {
@@ -28,16 +30,12 @@ class PlayerVideoSurface extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (initialized)
-            Video(
-              controller: controller,
-              controls: NoVideoControls,
-              fit: fit,
-            )
-          else
-            const Center(
-              child: CircularProgressIndicator(color: Colors.white),
-            ),
+          Video(
+            controller: controller,
+            controls: NoVideoControls,
+            fit: fit,
+            pauseUponEnteringBackgroundMode: pauseOnBackground,
+          ),
           if (showLoadingIndicator && errorText == null)
             Center(
               child: DecoratedBox(
@@ -87,43 +85,45 @@ class PlayerVideoSurface extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.1),
                     ),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.error_outline_rounded,
-                          size: 42,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          '播放加载失败',
-                          style: TextStyle(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            size: 42,
                             color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          errorText!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            height: 1.5,
+                          const SizedBox(height: 12),
+                          const Text(
+                            '播放加载失败',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                        if (onRetry != null) ...[
-                          const SizedBox(height: 18),
-                          FilledButton.icon(
-                            onPressed: onRetry,
-                            icon: const Icon(Icons.refresh_rounded),
-                            label: const Text('重新加载'),
+                          const SizedBox(height: 10),
+                          Text(
+                            errorText!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              height: 1.5,
+                            ),
                           ),
+                          if (onRetry != null) ...[
+                            const SizedBox(height: 18),
+                            FilledButton.icon(
+                              onPressed: onRetry,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('重新加载'),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),

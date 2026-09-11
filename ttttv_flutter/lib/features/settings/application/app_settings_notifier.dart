@@ -29,6 +29,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     return _save(state.copyWith(autoSavePlaybackProgress: enabled));
   }
 
+  Future<void> setAutoCheckSources(bool enabled) {
+    return _save(state.copyWith(autoCheckSources: enabled));
+  }
+
   Future<void> setDefaultVideoFit(VideoFitPreference preference) {
     return _save(state.copyWith(defaultVideoFit: preference));
   }

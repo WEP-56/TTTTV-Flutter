@@ -6,6 +6,7 @@ import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../domain/storage_manager.dart';
 import 'about_page.dart';
+import '../../sources/presentation/sources_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -219,6 +220,22 @@ class SettingsPage extends ConsumerWidget {
           ),
           const Divider(height: 1),
           const _SectionHeader(title: '播放'),
+          ListTile(
+            leading: const Icon(Icons.dns_outlined),
+            title: const Text('片源管理'),
+            subtitle: const Text('添加、导入、检测和管理片源'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const SourcesPage(),
+            )),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.network_check_rounded),
+            title: const Text('启动时自动检测片源'),
+            subtitle: const Text('默认关闭。开启后启动时检测并禁用异常片源；关闭后仍可手动检测。'),
+            value: appSettings.autoCheckSources,
+            onChanged: appSettingsNotifier.setAutoCheckSources,
+          ),
           _SettingsGroup(
             children: [
               SwitchListTile(

@@ -44,6 +44,8 @@ class PlayerControlsOverlay extends StatelessWidget {
     this.topActionIcon,
     this.topActionTooltip,
     this.onTopAction,
+    this.onPictureInPicture,
+    this.onCast,
     super.key,
   });
 
@@ -78,12 +80,15 @@ class PlayerControlsOverlay extends StatelessWidget {
   final IconData? topActionIcon;
   final String? topActionTooltip;
   final VoidCallback? onTopAction;
+  final VoidCallback? onPictureInPicture;
+  final VoidCallback? onCast;
 
   /// 紧凑模式下隐藏部分次要按钮（手机竖屏 / 极小窗口）。
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    if (compact) return _buildCompact(context);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -118,6 +123,8 @@ class PlayerControlsOverlay extends StatelessWidget {
               topActionTooltip: topActionTooltip,
               onTopAction: onTopAction,
               onMore: () => _openMoreSheet(context),
+              onPictureInPicture: onPictureInPicture,
+              onCast: onCast,
             ),
           ),
         ),
@@ -174,6 +181,108 @@ class PlayerControlsOverlay extends StatelessWidget {
     );
     onInteractionEnd();
   }
+
+  Widget _buildCompact(BuildContext context) {
+    Widget action(IconData icon, String label, VoidCallback? callback) =>
+        IconButton(
+          tooltip: label,
+          onPressed: callback,
+          icon: Icon(icon, size: 20),
+          color: Colors.white,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          visualDensity: VisualDensity.compact,
+        );
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.15,
+      child: Stack(
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.black54, Colors.transparent],
+              )),
+              child: Row(children: [
+                Expanded(
+                    child: Text(subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 11))),
+                if (onCast != null) action(Icons.cast_rounded, '投屏', onCast),
+                if (onPictureInPicture != null)
+                  action(Icons.picture_in_picture_alt_rounded, '小窗播放',
+                      onPictureInPicture),
+                action(Icons.more_vert_rounded, '更多',
+                    () => _openMoreSheet(context)),
+              ]),
+            ),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.black87],
+              )),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(
+                    height: 22,
+                    child: _PlayerScrubber(
+                      player: player,
+                      bufferPosition: bufferPosition,
+                      compact: true,
+                      onSeek: onSeek,
+                      onInteractionStart: onInteractionStart,
+                      onInteractionEnd: onInteractionEnd,
+                    )),
+                Row(children: [
+                  StreamBuilder<bool>(
+                      stream: player.stream.playing,
+                      initialData: player.state.playing,
+                      builder: (_, snapshot) => action(
+                            snapshot.data == true
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            snapshot.data == true ? '暂停' : '播放',
+                            () => unawaited(onPlayPause()),
+                          )),
+                  Flexible(
+                      child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: _CurrentTimeLabel(
+                              player: player, compact: true))),
+                  const Spacer(),
+                  _SpeedButton(
+                      speed: playbackSpeed,
+                      options: speedOptions,
+                      compact: true,
+                      onSelected: onSpeedSelected,
+                      onInteractionStart: onInteractionStart,
+                      onInteractionEnd: onInteractionEnd),
+                  action(Icons.playlist_play_rounded, '选集', onToggleEpisodes),
+                  action(Icons.fullscreen_rounded, '全屏',
+                      () => unawaited(onToggleFullscreen())),
+                ]),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _TopBar extends StatelessWidget {
@@ -187,6 +296,8 @@ class _TopBar extends StatelessWidget {
     this.topActionIcon,
     this.topActionTooltip,
     this.onTopAction,
+    this.onPictureInPicture,
+    this.onCast,
   });
 
   final String title;
@@ -198,6 +309,8 @@ class _TopBar extends StatelessWidget {
   final IconData? topActionIcon;
   final String? topActionTooltip;
   final VoidCallback? onTopAction;
+  final VoidCallback? onPictureInPicture;
+  final VoidCallback? onCast;
 
   @override
   Widget build(BuildContext context) {
@@ -260,6 +373,22 @@ class _TopBar extends StatelessWidget {
             compact: compact,
             onPressed: onMore,
           ),
+          if (onCast != null) ...[
+            const SizedBox(width: 8),
+            _CircleIconButton(
+                icon: Icons.cast_rounded,
+                tooltip: '投屏',
+                compact: compact,
+                onPressed: onCast!),
+          ],
+          if (onPictureInPicture != null) ...[
+            const SizedBox(width: 8),
+            _CircleIconButton(
+                icon: Icons.picture_in_picture_alt_rounded,
+                tooltip: '小窗播放',
+                compact: compact,
+                onPressed: onPictureInPicture!),
+          ],
           if (topActionIcon != null && onTopAction != null) ...[
             const SizedBox(width: 8),
             _CircleIconButton(

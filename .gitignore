@@ -52,3 +52,4 @@ sources.json
 
 # Reference upstream (kept locally only)
 /luna-tv-fork/
+.flutter-user
